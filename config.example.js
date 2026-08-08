@@ -1,0 +1,1 @@
+const MAPTILER_KEY = '请在此处填写你的 MapTiler Token';

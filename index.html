@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>我的铁路地图</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+    <script src="https://unpkg.com/maplibre-gl@4.6.0/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@4.6.0/dist/maplibre-gl.css" rel="stylesheet" />
+    <style>
+        body { margin: 0; padding: 0; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+    </style>
+</head>
+<body>
+    <div id="search-container" style="position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1100; width: 360px; max-width: 90vw;">
+        <input id="search-input" type="text" placeholder="搜索线路或车站" autocomplete="off"
+            style="width: 100%; padding: 10px 16px; border: none; border-radius: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); font-size: 14px; outline: none;">
+        <div id="search-results" style="display: none; margin-top: 8px; background: white; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-height: 320px; overflow-y: auto; font-family: 'Noto Sans', sans-serif;"></div>
+    </div>
+    <div id="map"></div>
+    <script src="config.js"></script>
+    <script src="map.js"></script>
+
+    <!-- 线路卡片 -->
+    <div id="line-detail-card" style="display: none; position: absolute; top: 20px; left: 20px; width: 400px; background: white; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); padding: 16px; z-index: 1000; font-family: 'Noto Sans', sans-serif;">
+        <div id="card-color-bar" style="width: 100%; height: 6px; border-radius: 3px; margin-bottom: 10px;"></div>
+        <div id="card-line-name" style="text-align: center; font-size: 24px; font-weight: bold; margin-bottom: 0px;"></div>
+        <div style="font-size: 16px; color: #777; text-align: center; font-weight: bold;"><span id="card-type"></span></div>
+        <div id="card-network-logo" style="text-align: center; margin-bottom: 6px;">
+            <img id="card-network-logo-img" alt="Network Logo" style="max-height: 27px; max-width: 100%; vertical-align: middle;">
+            <span style="display: inline-block; width: 1px; height: 15px; background: #ccc; margin: 0 8px; vertical-align: middle;"></span>
+            <span id="card-line-badge" style="display: inline-flex; flex-wrap: wrap; vertical-align: middle; gap: 4px; max-width: 180px;"></span>
+        </div>
+        <div style="font-size: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+            <span style="color: #555; font-weight: bold;">系统</span>
+            <span id="card-network"></span>
+        </div>
+    </div>
+
+    <!-- 车站卡片 -->
+    <div id="station-detail-card" style="display: none; position: absolute; top: 20px; left: 20px; width: 660px; background: white; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); padding: 16px; z-index: 1000; font-family: 'Noto Sans', sans-serif;">
+        <div id="station-color-bar" style="width: 100%; height: 6px; border-radius: 3px; margin-bottom: 10px;"></div>
+        <div id="station-name" style="text-align: center; font-size: 24px; font-weight: bold; margin-bottom: 0px;"></div>
+        <div style="font-size: 16px; color: #777; text-align: center; font-weight: bold;"><span id="station-type"></span></div>
+        <div id="station-network-logo" style="text-align: center; margin-bottom: 6px;">
+            <img id="station-network-logo-img" alt="Network Logo" style="max-height: 27px; max-width: 100%; vertical-align: middle;">
+        </div>
+        <div style="font-size: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 14px;">
+            <span style="color: #555; font-weight: bold;">系统</span>
+            <span id="station-network"></span>
+        </div>
+        <div><span style="color: #555; font-weight: bold;">当日班次</span></div>
+        <div class="station-table-wrapper" style="font-size: 14px;">
+            <table style="color:#555; width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr>
+                        <th style="text-align: left; padding: 4px; width:110px;">车次</th>
+                        <th style="text-align: left; padding: 4px; width:100px;">始发</th>
+                        <th style="text-align: left; padding: 4px; width:100px;">终到</th>
+                        <th style="text-align: left; padding: 4px; width:80px;">到达</th>
+                        <th style="text-align: left; padding: 4px; width:80px;">出发</th>
+                        <th style="text-align: left; padding: 4px; width:90px;">正晚点</th>
+                    </tr>
+                </thead>
+                <tbody id="station-departures-tbody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 车次详情卡片 -->
+    <!-- <div id="train-detail-card" style="display: none; position: absolute; top: 20px; left: 20px; width: 400px; max-height: 600px; overflow-y: auto; background: white; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); padding: 16px; z-index: 1000; font-family: 'Noto Sans', sans-serif;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <div id="train-detail-title" style="font-size: 20px; font-weight: bold;"></div>
+            <span id="close-train-card" style="cursor: pointer; font-size: 18px; color: #888;">&times;</span>
+        </div>
+        <pre id="train-detail-content" style="white-space: pre-wrap; font-size: 12px; color: #333; background: #f8f8f8; padding: 10px; border-radius: 8px; max-height: 450px; overflow-y: auto;"></pre>
+    </div> -->
+
+    <div id="train-detail-card" style="display: none; position: absolute; top: 20px; left: 20px; width: 700px; max-height: 1600px; overflow-y: auto; background: white; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); padding: 16px; z-index: 1000; font-family: 'Noto Sans', sans-serif;">
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px 0;">
+            <div id="train-detail-title" style="font-size: 20px; font-weight: bold;"></div>
+        </div>
+        <div id="train-detail-body" style="flex: 1; overflow-y: auto; padding: 12px 16px; scrollbar-width: none; -ms-overflow-style: none;">
+            <!-- 动态填充内容 -->
+        </div>
+    </div>
+
+    <style>
+        #station-detail-card {
+            max-height: 85vh;           /* 限制卡片整体高度不超过视口85% */
+            overflow: hidden;           /* 防止卡片本身出现滚动条 */
+            display: flex;
+            flex-direction: column;
+        }
+        .station-table-wrapper {
+            flex: 1;
+            overflow-y: auto;           /* 表格区域独立滚动 */
+            max-height: 60vh;           /* 可根据需要调整 */
+            scrollbar-width: none;      /* Firefox 隐藏滚动条 */
+            -ms-overflow-style: none;   /* IE/Edge 隐藏滚动条 */
+        }
+        .station-table-wrapper::-webkit-scrollbar {
+            display: none;              /* Chrome/Safari 隐藏滚动条 */
+        }
+        #train-detail-body::-webkit-scrollbar { display: none; }
+    </style>
+</body>
+</html>
