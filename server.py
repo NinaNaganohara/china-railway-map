@@ -211,6 +211,7 @@ def get_lines():
                        ST_AsGeoJSON(geometry)::json AS geometry
                 FROM transport_lines
                 WHERE source_type = %s
+                    AND (is_only_freight IS NULL OR is_only_freight = false)
             """, (source_type,))
             rows = cur.fetchall()
             features = []
