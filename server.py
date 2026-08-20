@@ -12,6 +12,7 @@ import psycopg2
 from psycopg2 import pool
 from dotenv import load_dotenv
 import os
+from flask import send_from_directory
 
 load_dotenv()
 
@@ -201,6 +202,14 @@ def query_train_info(train_code, start_day=None):
 app = Flask(__name__)
 CORS(app)
 
+@app.route('/')
+def index():
+    return send_from_directory('.', 'index.html')
+
+@app.route('/edit')
+def edit_page():
+    return send_from_directory('.', 'edit/index.html')
+
 @app.route('/api/lines')
 def get_lines():
     source_type = request.args.get('source_type', 'railway')
@@ -285,6 +294,83 @@ def train_detail():
         return jsonify({"success": True, "data": data})
     else:
         return jsonify({"success": False, "message": "查询失败"})
+
+@app.route('/api/update_line', methods=['POST'])
+def update_line():
+    data = request.get_json()
+    line_id = data.get('id')
+    if not line_id:
+        return jsonify({"success": False, "message": "缺少 id"}), 400
+
+    # 允许更新的字段（新增 is_high_speed）
+    fields = ['name', 'network', 'colour', 'abbreviation', 'ref', 'operator', 'is_only_freight', 'is_high_speed', 'is_abandoned']
+    updates = []
+    values = []
+    for field in fields:
+        if field in data:
+            updates.append(f"{field} = %s")
+            values.append(data[field])
+    if not updates:
+        return jsonify({"success": False, "message": "没有要更新的字段"}), 400
+
+    values.append(line_id)
+    sql = f"UPDATE transport_lines SET {', '.join(updates)} WHERE id = %s"
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, values)
+            conn.commit()
+            return jsonify({"success": True, "message": "更新成功"})
+
+@app.route('/api/update_station', methods=['POST'])
+def update_station():
+    data = request.get_json()
+    station_id = data.get('id')
+    if not station_id:
+        return jsonify({"success": False, "message": "缺少 id"}), 400
+
+    fields = ['name', 'network']
+    updates = []
+    values = []
+    for field in fields:
+        if field in data:
+            updates.append(f"{field} = %s")
+            values.append(data[field])
+    if not updates:
+        return jsonify({"success": False, "message": "没有要更新的字段"}), 400
+
+    values.append(station_id)
+    sql = f"UPDATE stations SET {', '.join(updates)} WHERE id = %s"
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, values)
+            conn.commit()
+            return jsonify({"success": True, "message": "更新成功"})
+
+@app.route('/api/delete_line', methods=['POST'])
+def delete_line():
+    data = request.get_json()
+    line_id = data.get('id')
+    if not line_id:
+        return jsonify({"success": False, "message": "缺少 id"}), 400
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM transport_lines WHERE id = %s", (line_id,))
+            conn.commit()
+            return jsonify({"success": True, "message": "线路已删除"})
+
+@app.route('/api/delete_station', methods=['POST'])
+def delete_station():
+    data = request.get_json()
+    station_id = data.get('id')
+    if not station_id:
+        return jsonify({"success": False, "message": "缺少 id"}), 400
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM stations WHERE id = %s", (station_id,))
+            conn.commit()
+            return jsonify({"success": True, "message": "车站已删除"})
 
 if __name__ == '__main__':
     init_pool()
