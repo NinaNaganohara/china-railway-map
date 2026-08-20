@@ -97,7 +97,6 @@ map.on('load', async () => {
         const linesRes = await fetch(`${API_BASE}/api/lines?source_type=railway`);
         const linesData = await linesRes.json();
         map.addSource('railway-lines', { type: 'geojson', data: linesData });
-        console.log({ type: 'geojson', data: linesData });
         map.addLayer({
             id: 'railway-line',
             type: 'line',
