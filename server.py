@@ -200,6 +200,7 @@ def query_train_info(train_code, start_day=None):
 
 # ========== Flask 应用 ==========
 app = Flask(__name__)
+init_pool()
 CORS(app)
 
 @app.route('/')
