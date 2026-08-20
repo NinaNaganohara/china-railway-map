@@ -57,16 +57,33 @@ CODE_TO_NAME = {}
 CODE_SET = set()
 
 def load_station_data():
-    global NAME_TO_CODE, CODE_TO_NAME, CODE_SET
-    url = "https://kyfw.12306.cn/otn/resources/js/framework/station_name.js"
-    resp = requests.get(url, timeout=10)
-    resp.encoding = "utf-8"
-    match = re.search(r"'([^']*)'", resp.text)
-    if not match:
-        raise ValueError("无法解析车站数据")
-    data_str = match.group(1)
-    records = data_str.split("@")[1:]
+    """
+    加载车站数据。优先从本地文件读取，若不存在则从 12306 获取。
+    返回 (name_to_code, code_to_name, code_set)
+    """
+    local_file = "station_name.js"  # 本地文件路径（与 server.py 同目录）
+    if os.path.exists(local_file):
+        print("从本地文件加载车站数据...")
+        content = open(local_file, encoding='utf-8').read()
+        match = re.search(r"'([^']*)'", content)
+        if not match:
+            raise ValueError("本地 station_name.js 格式错误")
+        data_str = match.group(1)
+    else:
+        print("尝试从 12306 获取车站数据...")
+        url = "https://kyfw.12306.cn/otn/resources/js/framework/station_name.js"
+        try:
+            resp = requests.get(url, timeout=10)
+            resp.encoding = "utf-8"
+            match = re.search(r"'([^']*)'", resp.text)
+            if not match:
+                raise ValueError("12306 返回数据格式错误")
+            data_str = match.group(1)
+        except Exception as e:
+            print(f"从 12306 获取失败: {e}")
+            return {}, {}, set()  # 返回空，避免崩溃
 
+    records = data_str.split("@")[1:]
     name_to_code = {}
     code_to_name = {}
     code_set = set()
@@ -78,8 +95,7 @@ def load_station_data():
             name_to_code[name] = code
             code_to_name[code] = name
             code_set.add(code)
-
-    NAME_TO_CODE, CODE_TO_NAME, CODE_SET = name_to_code, code_to_name, code_set
+    return name_to_code, code_to_name, code_set
 
 def get_station_code(input_str):
     if not input_str:
