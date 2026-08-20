@@ -97,6 +97,7 @@ map.on('load', async () => {
         const linesRes = await fetch(`${API_BASE}/api/lines?source_type=railway`);
         const linesData = await linesRes.json();
         map.addSource('railway-lines', { type: 'geojson', data: linesData });
+        console.log({ type: 'geojson', data: linesData });
         map.addLayer({
             id: 'railway-line',
             type: 'line',
@@ -110,7 +111,8 @@ map.on('load', async () => {
                         ['in', '高铁', ['get', 'name']],
                         ['in', '城际', ['get', 'name']],
                         ['in', '客专', ['get', 'name']],
-                        ['in', '客运专线', ['get', 'name']]
+                        ['in', '客运专线', ['get', 'name']],
+                        ["==", ["get", "is_high_speed"], true]
                     ], '#175e9c',
                     ['!=', ['get', 'colour'], null], ['get', 'colour'],   // 有自定义色就用
                     '#ff2600'  // 默认红色
@@ -209,7 +211,8 @@ map.on('load', async () => {
                     ['in', '高铁', ['get', 'name']],
                     ['in', '城际', ['get', 'name']],
                     ['in', '客专', ['get', 'name']],
-                    ['in', '客运专线', ['get', 'name']]
+                    ['in', '客运专线', ['get', 'name']],
+                    ["==", ["get", "is_high_speed"], true]
                 ], '#175e9c',
                 ['!=', ['get', 'colour'], null], ['get', 'colour'],
                 '#ff2600'

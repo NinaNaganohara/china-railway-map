@@ -207,11 +207,11 @@ def get_lines():
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, name, ref, network, operator, colour, abbreviation, source_type,
+                SELECT id, name, ref, network, operator, colour, abbreviation, source_type, is_high_speed,
                        ST_AsGeoJSON(geometry)::json AS geometry
                 FROM transport_lines
                 WHERE source_type = %s
-                    AND (is_only_freight IS NULL OR is_only_freight = false)
+                    AND ((is_only_freight IS NULL OR is_only_freight = false) AND (is_abandoned IS NULL OR is_abandoned =false))
             """, (source_type,))
             rows = cur.fetchall()
             features = []
@@ -226,9 +226,10 @@ def get_lines():
                         "operator": row[4],
                         "colour": row[5] if row[5] else None,
                         "abbreviation": row[6],
-                        "source_type": row[7]
+                        "source_type": row[7],
+                        "is_high_speed": row[8]
                     },
-                    "geometry": row[8]
+                    "geometry": row[9]
                 })
             return jsonify({"type": "FeatureCollection", "features": features})
 
