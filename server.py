@@ -58,18 +58,28 @@ CODE_SET = set()
 
 def load_station_data():
     """
-    加载车站数据。优先从本地文件读取，若不存在则从 12306 获取。
+    加载车站数据：优先从本地 station_name.js 读取，失败则尝试 12306。
     返回 (name_to_code, code_to_name, code_set)
     """
-    local_file = "station_name.js"  # 本地文件路径（与 server.py 同目录）
+    local_file = "station_name.js"  # 与 server.py 同目录
+
+    # 1. 尝试本地文件
     if os.path.exists(local_file):
-        print("从本地文件加载车站数据...")
-        content = open(local_file, encoding='utf-8').read()
-        match = re.search(r"'([^']*)'", content)
-        if not match:
-            raise ValueError("本地 station_name.js 格式错误")
-        data_str = match.group(1)
+        try:
+            with open(local_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            match = re.search(r"'([^']*)'", content)
+            if match:
+                data_str = match.group(1)
+                print("✅ 使用本地 station_name.js")
+            else:
+                print("❌ 本地 station_name.js 格式错误")
+                return {}, {}, set()
+        except Exception as e:
+            print(f"❌ 读取本地文件失败: {e}")
+            return {}, {}, set()
     else:
+        # 2. 尝试从 12306 获取
         print("尝试从 12306 获取车站数据...")
         url = "https://kyfw.12306.cn/otn/resources/js/framework/station_name.js"
         try:
@@ -77,12 +87,14 @@ def load_station_data():
             resp.encoding = "utf-8"
             match = re.search(r"'([^']*)'", resp.text)
             if not match:
-                raise ValueError("12306 返回数据格式错误")
+                print("12306 响应格式异常")
+                return {}, {}, set()
             data_str = match.group(1)
         except Exception as e:
             print(f"从 12306 获取失败: {e}")
-            return {}, {}, set()  # 返回空，避免崩溃
+            return {}, {}, set()
 
+    # 解析数据
     records = data_str.split("@")[1:]
     name_to_code = {}
     code_to_name = {}
@@ -90,8 +102,8 @@ def load_station_data():
     for record in records:
         fields = record.split("|")
         if len(fields) >= 7:
-            name = fields[1]
-            code = fields[2]
+            name = fields[1]   # 中文站名
+            code = fields[2]   # 三字码
             name_to_code[name] = code
             code_to_name[code] = name
             code_set.add(code)
@@ -215,6 +227,7 @@ def query_train_info(train_code, start_day=None):
         return None
 
 # ========== Flask 应用 ==========
+NAME_TO_CODE, CODE_TO_NAME, CODE_SET = load_station_data()
 app = Flask(__name__)
 init_pool()
 CORS(app)
@@ -287,6 +300,16 @@ def get_stations():
 @app.route('/api/station_board')
 def station_board():
     station = request.args.get('station', '').strip()
+    station = request.args.get('station', '').strip()
+    print(f"[DEBUG] 收到 station 参数: '{station}'")
+    print(f"[DEBUG] 站名映射表大小: {len(NAME_TO_CODE)}")
+    code = get_station_code(station)
+    print(f"[DEBUG] 查询到的三字码: {code}")
+    if not code:
+        suggestions = search_stations(station, 5)
+        print(f"[DEBUG] 建议车站: {suggestions}")
+        return jsonify({"success": False, "message": f"无法识别车站: {station}", "suggestions": suggestions})
+
     date = request.args.get('date', '')
     if not station:
         return jsonify({"success": False, "message": "缺少 station 参数"}), 400
