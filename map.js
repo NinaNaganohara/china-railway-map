@@ -36,7 +36,7 @@
 
     const map = new maplibregl.Map({
         container: 'map',
-        style: `https://api.maptiler.com/maps/base-v4/style.json?key=${MAPTILER_KEY}`,
+        style: '/style.json',   // 本地样式文件
         center: [116.3972, 39.9075],
         zoom: 5,
         pitch: 0,
