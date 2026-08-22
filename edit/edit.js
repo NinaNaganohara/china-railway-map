@@ -119,6 +119,17 @@
                     </select>
                 </label>
             `;
+            // 车站顺序按钮（编辑线路时展示）
+            const lineId = feature.id || props.id;
+            html += `
+                <div style="margin-top:12px; text-align:center;">
+                    <button type="button" id="open-order-panel-btn" style="padding:6px 14px;background:#175e9c;color:#fff;border:none;border-radius:4px;cursor:pointer;">🚉 编辑车站顺序</button>
+                </div>
+            `;
+            setTimeout(() => {
+                const btn = document.getElementById('open-order-panel-btn');
+                if (btn) btn.addEventListener('click', () => openOrderPanel(lineId));
+            }, 0);
         } else {
             html = `
                 <label>ID: <input type="text" value="${feature.id || props.id}" disabled></label><br>
@@ -203,6 +214,118 @@
                 }
             } else {
                 alert('删除失败：' + result.message);
+            }
+        } catch (err) {
+            console.error(err);
+            alert('网络错误');
+        }
+    }
+
+    // ========== 车站顺序排序面板 ==========
+    let orderPanel = null;
+    let currentOrderLineId = null;
+    let currentOrderStations = [];   // 当前顺序的 [{id, name}]
+
+    function buildOrderPanel() {
+        if (orderPanel) return orderPanel;
+        const el = ensureElement('order-panel', 'div',
+            'display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:420px;max-height:75vh;display:flex;flex-direction:column;background:white;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.15);padding:16px;z-index:1300;font-family:Noto Sans,sans-serif;'
+        );
+        // 注意 ensureElement 会内联 style，上面的 display:none 与 display:flex 冲突，手动处理
+        el.style.display = 'none';
+        el.innerHTML = `
+            <h3 style="margin-top:0;">编辑车站顺序</h3>
+            <div style="font-size:12px;color:#777;margin-bottom:8px;">拖拽车站调整途经顺序（已按地理走向预排序）</div>
+            <div id="order-list" style="flex:1;overflow-y:auto;max-height:52vh;border:1px solid #eee;border-radius:8px;padding:4px;">
+                <div style="padding:12px;text-align:center;color:#999;">加载中...</div>
+            </div>
+            <div style="margin-top:12px;text-align:right;">
+                <button type="button" id="order-cancel" style="padding:6px 12px;margin-right:8px;">取消</button>
+                <button type="button" id="order-save" style="padding:6px 14px;background:#175e9c;color:#fff;border:none;border-radius:4px;">保存顺序</button>
+            </div>
+        `;
+        orderPanel = el;
+        document.getElementById('order-cancel').addEventListener('click', closeOrderPanel);
+        document.getElementById('order-save').addEventListener('click', saveOrder);
+        return orderPanel;
+    }
+
+    function openOrderPanel(lineId) {
+        buildOrderPanel();
+        currentOrderLineId = lineId;
+        orderPanel.style.display = 'flex';
+        const listEl = document.getElementById('order-list');
+        listEl.innerHTML = '<div style="padding:12px;text-align:center;color:#999;">加载中...</div>';
+        fetch(`${window.API_BASE}/api/line_station_order?line_id=${lineId}`)
+            .then(res => res.json())
+            .then(data => {
+                if (!data.success) { listEl.innerHTML = `<div style="padding:12px;color:#c00;">加载失败：${data.message}</div>`; return; }
+                currentOrderStations = (data.stations || []).map(s => ({ id: s.id, name: s.name }));
+                renderOrderList();
+            })
+            .catch(() => { listEl.innerHTML = '<div style="padding:12px;color:#c00;">网络错误</div>'; });
+    }
+
+    function closeOrderPanel() {
+        if (orderPanel) orderPanel.style.display = 'none';
+        currentOrderLineId = null;
+    }
+
+    function renderOrderList() {
+        const listEl = document.getElementById('order-list');
+        listEl.innerHTML = '';
+        if (currentOrderStations.length === 0) {
+            listEl.innerHTML = '<div style="padding:12px;text-align:center;color:#999;">该线路暂无关联车站</div>';
+            return;
+        }
+        currentOrderStations.forEach((st, idx) => {
+            const item = document.createElement('div');
+            item.setAttribute('draggable', 'true');
+            item.dataset.index = String(idx);
+            item.style.cssText = 'display:flex;align-items:center;padding:6px 8px;margin:2px 0;background:#f7f7f7;border-radius:6px;cursor:grab;';
+            item.innerHTML = `
+                <span style="width:24px;color:#999;font-size:12px;">${idx + 1}</span>
+                <span style="flex:1;font-size:14px;">${st.name}</span>
+                <span style="color:#bbb;font-size:16px;">⠿</span>
+            `;
+            item.addEventListener('dragstart', (e) => {
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', String(idx));
+                item.style.opacity = '0.4';
+            });
+            item.addEventListener('dragend', () => { item.style.opacity = '1'; });
+            item.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+            });
+            item.addEventListener('drop', (e) => {
+                e.preventDefault();
+                const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
+                const to = parseInt(item.dataset.index, 10);
+                if (from === to || isNaN(from)) return;
+                const moved = currentOrderStations.splice(from, 1)[0];
+                currentOrderStations.splice(to, 0, moved);
+                renderOrderList();
+            });
+            listEl.appendChild(item);
+        });
+    }
+
+    async function saveOrder() {
+        if (!currentOrderLineId) return;
+        const station_ids = currentOrderStations.map(s => s.id);
+        try {
+            const res = await fetch(`${window.API_BASE}/api/save_line_station_order`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ line_id: currentOrderLineId, station_ids })
+            });
+            const result = await res.json();
+            if (result.success) {
+                alert('顺序已保存');
+                closeOrderPanel();
+            } else {
+                alert('保存失败：' + result.message);
             }
         } catch (err) {
             console.error(err);

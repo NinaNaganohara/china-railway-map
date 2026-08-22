@@ -56,14 +56,19 @@
         return str;
     }
 
+    function collectCoords(geometry, acc) {
+        if (!geometry) return;
+        const type = geometry.type;
+        if (type === 'Point') acc.push(geometry.coordinates);
+        else if (type === 'MultiPoint' || type === 'LineString') geometry.coordinates.forEach(c => acc.push(c));
+        else if (type === 'MultiLineString' || type === 'Polygon') geometry.coordinates.forEach(ring => ring.forEach(c => acc.push(c)));
+        else if (type === 'MultiPolygon') geometry.coordinates.forEach(poly => poly.forEach(ring => ring.forEach(c => acc.push(c))));
+    }
+
     function getGeometryExtent(geometry) {
         if (!geometry) return null;
         const coords = [];
-        const type = geometry.type;
-        if (type === 'Point') coords.push(geometry.coordinates);
-        else if (type === 'MultiPoint' || type === 'LineString') geometry.coordinates.forEach(c => coords.push(c));
-        else if (type === 'MultiLineString' || type === 'Polygon') geometry.coordinates.forEach(ring => ring.forEach(c => coords.push(c)));
-        else if (type === 'MultiPolygon') geometry.coordinates.forEach(poly => poly.forEach(ring => ring.forEach(c => coords.push(c))));
+        collectCoords(geometry, coords);
         if (coords.length === 0) return null;
         const bounds = coords.reduce((b, coord) => b.extend(coord), new maplibregl.LngLatBounds(coords[0], coords[0]));
         return bounds;
@@ -80,10 +85,15 @@
     }
 
     map.on('load', async () => {
+        // 保存完整线路/车站数据（含未分块的完整几何），供定位使用
+        let allLinesData = null;
+        let allStationsData = null;
+
         // ========== 加载铁路线路 ==========
         try {
             const linesRes = await fetch(`${API_BASE}/api/lines?source_type=railway`);
             const linesData = await linesRes.json();
+            allLinesData = linesData;
             map.addSource('railway-lines', { type: 'geojson', data: linesData });
             map.addLayer({
                 id: 'railway-line',
@@ -114,6 +124,7 @@
         try {
             const stationsRes = await fetch(`${API_BASE}/api/stations`);
             const stationsData = await stationsRes.json();
+            allStationsData = stationsData;
             map.addSource('railway-stations', { type: 'geojson', data: stationsData });
             map.addLayer({
                 id: 'railway-stations-circle',
@@ -269,6 +280,8 @@
 
         function highlightLine(network, name) {
             const matchExpr = ['==', ['get', 'name'], name];
+            // 判断某车站是否属于当前高亮的线路（feature 的 line_names 含该线路名）
+            const onLineExpr = ['in', name, ['coalesce', ['get', 'line_names'], ['literal', []]]];
             allLineLayerIds.forEach(id => {
                 const orig = originalPaints[id];
                 map.setPaintProperty(id, 'line-color', ['case', matchExpr, orig['line-color'], '#888888']);
@@ -281,15 +294,17 @@
                 try { map.setPaintProperty(id, 'text-opacity', ['case', matchExpr, 1, 0.7]); } catch (e) {}
             });
             allStationLabelIds.forEach(id => {
-                try { map.setPaintProperty(id, 'text-color', '#888888'); } catch (e) {}
-                try { map.setPaintProperty(id, 'text-opacity', 0.7); } catch (e) {}
+                const orig = originalPaints[id];
+                try { map.setPaintProperty(id, 'text-color', ['case', onLineExpr, orig['text-color'], '#888888']); } catch (e) {}
+                try { map.setPaintProperty(id, 'text-opacity', ['case', onLineExpr, 1, 0.7]); } catch (e) {}
             });
             allStationCircleLayerIds.forEach(id => {
-                try { map.setPaintProperty(id, 'circle-color', '#888888'); } catch (e) {}
-                try { map.setPaintProperty(id, 'circle-opacity', 0.6); } catch (e) {}
+                const orig = originalPaints[id];
+                try { map.setPaintProperty(id, 'circle-color', ['case', onLineExpr, orig['circle-color'], '#888888']); } catch (e) {}
+                try { map.setPaintProperty(id, 'circle-opacity', ['case', onLineExpr, 1, 0.6]); } catch (e) {}
             });
             allStationIconLayerIds.forEach(id => {
-                try { map.setPaintProperty(id, 'icon-opacity', 0.25); } catch (e) {}
+                try { map.setPaintProperty(id, 'icon-opacity', ['case', onLineExpr, 1, 0.25]); } catch (e) {}
             });
         }
 
@@ -383,6 +398,48 @@
             body.innerHTML = html;
         }
 
+        // ========== 请求管理（可取消） ==========
+        let activeControllers = [];
+        function trackedFetch(url, options = {}) {
+            const controller = new AbortController();
+            activeControllers.push(controller);
+            const opts = { ...options, signal: controller.signal };
+            return fetch(url, opts).finally(() => {
+                const idx = activeControllers.indexOf(controller);
+                if (idx !== -1) activeControllers.splice(idx, 1);
+            });
+        }
+        function cancelAllRequests() {
+            const controllers = activeControllers;
+            activeControllers = [];
+            controllers.forEach(c => c.abort());
+        }
+        function isAbortError(err) {
+            return err && err.name === 'AbortError';
+        }
+
+        // ========== 定位（统一供卡片与搜索使用；用完整数据，避免分块裁剪） ==========
+        function focusOnLine(lineName) {
+            // 从完整线路数据里按名称匹配所有同名段，合并展示整条线路
+            if (!allLinesData || !allLinesData.features) return;
+            const coords = [];
+            allLinesData.features.forEach(f => {
+                if ((f.properties.name || '') === lineName && f.geometry) {
+                    collectCoords(f.geometry, coords);
+                }
+            });
+            if (coords.length === 0) return;
+            const bounds = coords.reduce((b, coord) => b.extend(coord), new maplibregl.LngLatBounds(coords[0], coords[0]));
+            map.fitBounds(bounds, { padding: 60, maxZoom: 16 });
+        }
+        function focusOnStation(stationId) {
+            if (!allStationsData || !allStationsData.features) return;
+            const feat = allStationsData.features.find(f => f.properties.id === stationId);
+            if (feat && feat.geometry) {
+                map.flyTo({ center: feat.geometry.coordinates, zoom: 15 });
+            }
+        }
+
         map.on('mousemove', (e) => {
             const isOverLine = map.queryRenderedFeatures(e.point, { layers: ['railway-label'] }).length > 0;
             const isOverStation = map.queryRenderedFeatures(e.point, { layers: allStationFeatureLayerIds }).length > 0;
@@ -424,6 +481,35 @@
                 stationCard.style.display = 'none';
                 trainCard.style.display = 'none';
                 highlightLine(network, name);
+                cancelAllRequests();
+                // 加载途经车站
+                const lineStationsList = document.getElementById('line-stations-list');
+                lineStationsList.innerHTML = '加载中...';
+                trackedFetch(`${API_BASE}/api/line_stations?line_id=${props.id}`)
+                    .then(res => res.json())
+                    .then(data => {
+                        if (!data.success) {
+                            lineStationsList.innerHTML = `<span style="color:#c00;">加载失败：${data.message}</span>`;
+                            return;
+                        }
+                        const stations = data.stations || [];
+                        if (stations.length === 0) {
+                            lineStationsList.innerHTML = '<span style="color:#999;">暂无途经车站数据</span>';
+                            return;
+                        }
+                        lineStationsList.innerHTML = '';
+                        stations.forEach(s => {
+                            const chip = document.createElement('span');
+                            chip.textContent = s.name;
+                            chip.style.cssText = 'display:inline-block; margin:2px 4px 2px 0; padding:2px 8px; background:#f0f0f0; border-radius:10px; cursor:pointer;';
+                            chip.addEventListener('click', (ev) => {
+                                ev.stopPropagation();
+                                focusOnStation(s.id);
+                            });
+                            lineStationsList.appendChild(chip);
+                        });
+                    })
+                    .catch((err) => { if (!isAbortError(err)) lineStationsList.innerHTML = '<span style="color:#c00;">网络错误</span>'; });
                 e.preventDefault();
             }
             else if (stationFeatures.length > 0) {
@@ -435,10 +521,42 @@
                 document.getElementById('station-network').textContent = network;
                 document.getElementById('station-type').textContent = '火车站';
                 document.getElementById('station-network-logo-img').src = './assets/icons/中国铁路.svg';
+                cancelAllRequests();
+                // 加载关联线路
+                const stationLinesList = document.getElementById('station-lines-list');
+                stationLinesList.innerHTML = '加载中...';
+                trackedFetch(`${API_BASE}/api/station_lines?station_id=${props.id}`)
+                    .then(res => res.json())
+                    .then(data => {
+                        if (!data.success) {
+                            stationLinesList.innerHTML = `<span style="color:#c00;">加载失败：${data.message}</span>`;
+                            return;
+                        }
+                        const lines = data.lines || [];
+                        if (lines.length === 0) {
+                            stationLinesList.innerHTML = '<span style="color:#999;">暂无关联线路</span>';
+                            return;
+                        }
+                        stationLinesList.innerHTML = '';
+                        lines.forEach(l => {
+                            const colour = l.colour || '#ff2600';
+                            const chip = document.createElement('span');
+                            chip.textContent = l.name;
+                            chip.style.cssText = `display:inline-block; margin:2px 4px 2px 0; padding:2px 8px; background:${colour}; color:#fff; border-radius:10px; font-size:12px; cursor:pointer;`;
+                            chip.addEventListener('click', (ev) => {
+                                ev.stopPropagation();
+                                resetHighlight();
+                                highlightLine(l.network || '', l.name);
+                                focusOnLine(l.name);
+                            });
+                            stationLinesList.appendChild(chip);
+                        });
+                    })
+                    .catch((err) => { if (!isAbortError(err)) stationLinesList.innerHTML = '<span style="color:#c00;">网络错误</span>'; });
                 const tbody = document.getElementById('station-departures-tbody');
                 tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:8px;">加载中...</td></tr>';
                 const queryDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-                fetch(`${API_BASE}/api/station_board?station=${encodeURIComponent(stationName)}`)
+                trackedFetch(`${API_BASE}/api/station_board?station=${encodeURIComponent(stationName)}`)
                     .then(res => res.json())
                     .then(data => {
                         tbody.innerHTML = '';
@@ -473,7 +591,7 @@
                             const tdDelay = tr.lastElementChild;
                             tr.addEventListener('click', (ev) => {
                                 ev.stopPropagation();
-                                fetch(`${API_BASE}/api/train_detail?train_code=${encodeURIComponent(train.train_code)}&date=${queryDate}`)
+                                trackedFetch(`${API_BASE}/api/train_detail?train_code=${encodeURIComponent(train.train_code)}&date=${queryDate}`)
                                     .then(res => res.json())
                                     .then(detailData => {
                                         if (detailData.success) {
@@ -486,7 +604,7 @@
                                         }
                                     });
                             });
-                            fetch(`${API_BASE}/api/train_detail?train_code=${encodeURIComponent(train.train_code)}&date=${queryDate}`)
+                            trackedFetch(`${API_BASE}/api/train_detail?train_code=${encodeURIComponent(train.train_code)}&date=${queryDate}`)
                                 .then(res => res.json())
                                 .then(detailData => {
                                     if (!detailData.success) { tdDelay.textContent = '查询失败'; return; }
@@ -519,10 +637,10 @@
                                         tdDelay.style.color = '';
                                     }
                                 })
-                                .catch(() => { tdDelay.textContent = '网络错误'; });
+                                .catch((err) => { if (!isAbortError(err)) tdDelay.textContent = '网络错误'; });
                             tbody.appendChild(tr);
                         });
-                    }).catch(() => { tbody.innerHTML = '<tr><td colspan="6">网络错误</td></tr>'; });
+                    }).catch((err) => { if (!isAbortError(err)) tbody.innerHTML = '<tr><td colspan="6">网络错误</td></tr>'; });
                 stationCard.style.display = 'block';
                 lineCard.style.display = 'none';
                 trainCard.style.display = 'none';
@@ -530,6 +648,7 @@
             }
             else {
                 resetHighlight();
+                cancelAllRequests();
                 lineCard.style.display = 'none';
                 stationCard.style.display = 'none';
                 trainCard.style.display = 'none';
@@ -546,19 +665,37 @@
             if (!keyword) { searchResults.style.display = 'none'; return; }
             debounceTimer = setTimeout(() => {
                 const results = [];
-                const lineFeatures = map.querySourceFeatures('railway-lines', {
-                    filter: ['any',
-                        ['in', keyword.toLowerCase(), ['downcase', ['get', 'name']]],
-                        ['in', keyword.toLowerCase(), ['downcase', ['get', 'ref']]],
-                    ]
-                });
-                lineFeatures.forEach(f => results.push({ type: 'line', properties: f.properties, geometry: f.geometry }));
-                const stationFeatures = map.querySourceFeatures('railway-stations', {
-                    filter: ['any',
-                        ['in', keyword.toLowerCase(), ['downcase', ['get', 'name']]]
-                    ]
-                });
-                stationFeatures.forEach(f => results.push({ type: 'station', properties: f.properties, geometry: f.geometry }));
+                const kw = keyword.toLowerCase();
+                const seen = new Set();
+                // 从完整数据（非分块）搜索线路，避免只搜当前视口 / 重复
+                if (allLinesData && allLinesData.features) {
+                    allLinesData.features.forEach(f => {
+                        const p = f.properties || {};
+                        const name = (p.name || '');
+                        const ref = (p.ref || '');
+                        if (name.toLowerCase().includes(kw) || ref.toLowerCase().includes(kw)) {
+                            const key = 'line:' + p.id;
+                            if (!seen.has(key)) {
+                                seen.add(key);
+                                results.push({ type: 'line', properties: p, geometry: f.geometry });
+                            }
+                        }
+                    });
+                }
+                // 从完整数据搜索车站
+                if (allStationsData && allStationsData.features) {
+                    allStationsData.features.forEach(f => {
+                        const p = f.properties || {};
+                        const name = (p.name || '');
+                        if (name.toLowerCase().includes(kw)) {
+                            const key = 'station:' + p.id;
+                            if (!seen.has(key)) {
+                                seen.add(key);
+                                results.push({ type: 'station', properties: p, geometry: f.geometry });
+                            }
+                        }
+                    });
+                }
                 searchResults.innerHTML = '';
                 if (results.length === 0) {
                     searchResults.innerHTML = '<div style="padding:12px;text-align:center;">无结果</div>';
@@ -576,15 +713,14 @@
                                 searchInput.value = '';
                                 resetHighlight();
                                 highlightLine(item.properties.network || '', item.properties.name);
-                                const bounds = getGeometryExtent(item.geometry);
-                                if (bounds) map.fitBounds(bounds, { padding: 60, maxZoom: 16 });
+                                focusOnLine(item.properties.name);
                             });
                         } else {
                             div.innerHTML = `🚉 ${item.properties.name}`;
                             div.addEventListener('click', () => {
                                 searchResults.style.display = 'none';
                                 searchInput.value = '';
-                                map.flyTo({ center: item.geometry.coordinates, zoom: 15 });
+                                focusOnStation(item.properties.id);
                             });
                         }
                         searchResults.appendChild(div);
