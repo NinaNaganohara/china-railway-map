@@ -281,6 +281,7 @@ def get_stations():
                        ST_AsGeoJSON(geometry)::json AS geometry
                 FROM stations
                 WHERE source_type = 'railway'
+                    AND (deleted IS NULL OR deleted = false)
             """)
             rows = cur.fetchall()
             features = []
@@ -406,9 +407,10 @@ def delete_station():
     if not station_id:
         return jsonify({"success": False, "message": "缺少 id"}), 400
 
+    # 软删除：标记 deleted = true，保留记录以阻止后续导入重新加入同名车站
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM stations WHERE id = %s", (station_id,))
+            cur.execute("UPDATE stations SET deleted = true WHERE id = %s", (station_id,))
             conn.commit()
             return jsonify({"success": True, "message": "车站已删除"})
 
