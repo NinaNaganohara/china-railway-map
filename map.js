@@ -78,8 +78,9 @@
         const props = feature.properties;
         const network = props.network || '';
         const name = (props.name || '') + (props['name:zh'] || '');
+        const is_high_speed = props.is_high_speed;
         if (network === '珠三角城际') return '#009543';
-        if (/高速|高铁|城际|客专|客运专线/.test(name)) return '#175e9c';
+        if (/高速|高铁|城际|客专|客运专线/.test(name) || is_high_speed) return '#175e9c';
         if (props.colour && props.colour !== '#ff2600') return props.colour;
         return '#ff2600';
     }
