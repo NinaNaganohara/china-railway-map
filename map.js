@@ -499,16 +499,25 @@
                             return;
                         }
                         lineStationsList.innerHTML = '';
-                        stations.forEach(s => {
-                            const chip = document.createElement('span');
-                            chip.textContent = s.name;
-                            chip.style.cssText = 'display:inline-block; margin:2px 4px 2px 0; padding:2px 8px; background:#f0f0f0; border-radius:10px; cursor:pointer;';
-                            chip.addEventListener('click', (ev) => {
-                                ev.stopPropagation();
-                                focusOnStation(s.id);
+                            stations.forEach(s => {
+                                const chip = document.createElement('span');
+                                chip.textContent = s.name;
+
+                                // ===== Grid 父级下的纯文字修复方案 =====
+                                chip.style.setProperty('display', 'inline', 'important');        // 改为行内元素
+                                chip.style.setProperty('width', 'fit-content', 'important');     // 宽度自适应内容（关键）
+                                chip.style.setProperty('justify-self', 'start', 'important');    // 水平靠左，不拉伸
+                                chip.style.setProperty('align-self', 'start', 'important');      // 垂直靠上，不拉伸
+                                chip.style.setProperty('padding', '1px', 'important');
+                                chip.style.setProperty('margin', '0', 'important');      // 保留文字间距
+                                chip.style.setProperty('cursor', 'pointer', 'important');
+
+                                chip.addEventListener('click', (ev) => {
+                                    ev.stopPropagation();
+                                    focusOnStation(s.id);
+                                });
+                                lineStationsList.appendChild(chip);
                             });
-                            lineStationsList.appendChild(chip);
-                        });
                     })
                     .catch((err) => { if (!isAbortError(err)) lineStationsList.innerHTML = '<span style="color:#c00;">网络错误</span>'; });
                 e.preventDefault();
@@ -540,10 +549,10 @@
                         }
                         stationLinesList.innerHTML = '';
                         lines.forEach(l => {
-                            const colour = l.colour || '#ff2600';
+                            const colour = getLineColor({ properties: l });
                             const chip = document.createElement('span');
                             chip.textContent = l.name;
-                            chip.style.cssText = `display:inline-block; margin:2px 4px 2px 0; padding:2px 8px; background:${colour}; color:#fff; border-radius:10px; font-size:12px; cursor:pointer;`;
+                            chip.style.cssText = `display:inline-block; margin:2px 4px 2px 0; padding:0 7px 2px 7px; background:${colour}; color:#fff; border-radius:8px; font-size:14px; font-weight:bold; cursor:pointer;`;
                             chip.addEventListener('click', (ev) => {
                                 ev.stopPropagation();
                                 resetHighlight();

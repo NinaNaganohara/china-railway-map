@@ -379,6 +379,9 @@ def station_lines():
                 JOIN transport_lines l ON l.id = sl.line_id
                 WHERE sl.station_id = %s
                     AND (l.deleted IS NULL OR l.deleted = false)
+                    AND (l.is_only_freight IS NULL OR l.is_only_freight = false)
+                    AND (l.is_abandoned IS NULL OR l.is_abandoned = false)
+                    AND l.source_type = 'railway'
                 ORDER BY l.name
             """, (station_id,))
             rows = cur.fetchall()
