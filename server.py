@@ -364,6 +364,48 @@ def line_stations():
             stations = [{"id": r[0], "name": r[1], "source_type": r[2], "network": r[3]} for r in rows]
             return jsonify({"success": True, "count": len(stations), "stations": stations})
 
+@app.route('/api/station_belong_and_bureau')
+def station_belong_and_bureau():
+    # 1. 获取前端传过来的车站名
+    station = request.args.get('station', '').strip()
+    if not station:
+        return jsonify({"success": False, "message": "缺少 station 参数"}), 400
+
+    # 2. 这里需要你已有的转换函数，将中文站名转为电报码
+    #    如果还没有，可以先用一个简单的映射或调用其他接口
+    #    此处假设你有 get_station_code(station) 函数
+    #    如果没有，可以暂时用硬编码测试，但必须实现真实转换
+    station_code = get_station_code(station)   # 请自行实现
+    if not station_code:
+        return jsonify({
+            "success": False,
+            "message": f"无法识别车站: {station}"
+        }), 200
+
+    # 3. 调用第三方 API
+    url = f"https://data.railgo.zenglingkun.cn/api/station/query?telecode={station_code}"
+    try:
+        resp = requests.get(url, timeout=5)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": f"请求第三方服务失败: {str(e)}"
+        }), 500
+
+    # 4. 提取目标字段
+    station_info = data.get('data', {})
+    belong = station_info.get('belong', '')
+    bureau = station_info.get('bureau', '')
+
+    # 5. 返回前端期望格式
+    return jsonify({
+        "success": True,
+        "belong": belong,
+        "bureau": bureau
+    })
+
 @app.route('/api/station_lines')
 def station_lines():
     """返回某车站关联的线路列表（按 station_line 关联表）"""

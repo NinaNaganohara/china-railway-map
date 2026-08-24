@@ -526,11 +526,39 @@
                 const props = stationFeatures[0].properties;
                 const stationName = props.name || '未知车站';
                 const network = props.network || '中国铁路';
+                const bureau = "";
+                const belong = "";
                 document.getElementById('station-color-bar').style.backgroundColor = '#ff2600';
                 document.getElementById('station-name').textContent = stationName;
                 document.getElementById('station-network').textContent = network;
                 document.getElementById('station-type').textContent = '火车站';
                 document.getElementById('station-network-logo-img').src = './assets/icons/中国铁路.svg';
+                fetch(`/api/station_belong_and_bureau?station=${encodeURIComponent(stationName)}`)
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('网络响应异常');
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        if (data.success) {
+                            console.log('所属路局:', data.bureau);
+                            console.log('车务段:', data.belong);
+                            // 你可以在这里更新页面上的显示
+                            document.getElementById('station-bureau').textContent = data.bureau || '未知';
+                            document.getElementById('station-belong').textContent = data.belong || '未知';
+                        } else {
+                            console.error('获取失败:', data.message);
+                            // 显示错误信息
+                            document.getElementById('station-bureau').textContent = '加载失败';
+                            document.getElementById('station-belong').textContent = '加载失败';
+                        }
+                    })
+                    .catch(error => {
+                        console.error('请求错误:', error);
+                        document.getElementById('station-bureau').textContent = '网络错误';
+                        document.getElementById('station-belong').textContent = '网络错误';
+                    });
                 cancelAllRequests();
                 // 加载关联线路
                 const stationLinesList = document.getElementById('station-lines-list');
