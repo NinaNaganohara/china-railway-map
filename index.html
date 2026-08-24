@@ -28,7 +28,7 @@
     <script src="map.js"></script>
 
     <!-- 线路卡片 -->
-    <div id="line-detail-card" style="display: none; position: absolute; top: 20px; left: 20px; width: 400px; background: white; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); padding: 16px; z-index: 1000; font-family: 'Noto Sans', sans-serif;">
+    <div id="line-detail-card" style="max-height: 85vh; display: none; position: absolute; top: 20px; left: 20px; width: 400px; background: white; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); padding: 16px; z-index: 1000; font-family: 'Noto Sans', sans-serif;">
         <div id="card-color-bar" style="width: 100%; height: 6px; border-radius: 3px; margin-bottom: 10px;"></div>
         <div id="card-line-name" style="text-align: center; font-size: 24px; font-weight: bold; margin-bottom: 0px;"></div>
         <div style="font-size: 16px; color: #777; text-align: center; font-weight: bold;"><span id="card-type"></span></div>
@@ -42,7 +42,7 @@
             <span id="card-network"></span>
         </div>
         <div style="margin-top: 12px;"><span style="color: #555; font-weight: bold; font-size: 14px;">途经车站</span></div>
-        <div id="line-stations-container" class="station-table-wrapper" style="font-size: 14px; max-height: 1000px; color: #555">
+        <div id="line-stations-container" class="station-table-wrapper" style="font-size: 14px; color: #555">
             <div id="line-stations-list" style="padding: 4px 0px 0px 8px; display: grid;">加载中...</div>
         </div>
     </div>
