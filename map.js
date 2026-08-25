@@ -85,6 +85,15 @@
         return '#ff2600';
     }
 
+    // 根据车次号首字母确定路径颜色：G/D/C/S 高铁蓝，Z/T/K/纯数字 普速红，其他默认红
+    function getTrainRouteColor(trainCode) {
+        const code = String(trainCode || '').trim();
+        if (!code) return '#ff2600';
+        const first = code[0].toUpperCase();
+        if ('GDCS'.indexOf(first) >= 0) return '#175e9c';
+        return '#ff2600';  // Z/T/K、纯数字及其他情况均为红色
+    }
+
     map.on('load', async () => {
         // 保存完整线路/车站数据（含未分块的完整几何），供定位使用
         let allLinesData = null;
@@ -238,6 +247,32 @@
             }
         });
 
+        // ========== 车次行驶路径图层 ==========
+        // 空 FeatureCollection 占位，展示车次详情时用 setData 更新
+        map.addSource('train-route', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+        map.addLayer({
+            id: 'train-route-line',
+            type: 'line',
+            source: 'train-route',
+            paint: {
+                'line-color': '#ff2600',
+                'line-width': 5,
+                'line-opacity': 1,
+            }
+        });
+        map.addLayer({
+            id: 'train-route-station',
+            type: 'circle',
+            source: 'train-route',
+            filter: ['==', ['get', 'kind'], 'station'],
+            paint: {
+                'circle-radius': 6,
+                'circle-color': '#ff2600',
+                'circle-stroke-color': '#ffffff',
+                'circle-stroke-width': 2
+            }
+        });
+
         // ========== 交互卡片 ==========
         const lineCard = document.getElementById('line-detail-card');
         const stationCard = document.getElementById('station-detail-card');
@@ -343,6 +378,101 @@
                 const iconOrig = originalPaints[id] || { 'icon-opacity': 1 };
                 map.setPaintProperty(id, 'icon-opacity', iconOrig['icon-opacity']);
             });
+        }
+
+        // ========== 车次路径高亮与置灰 ==========
+        // 当前车次停靠的站名集合（用于置灰时保留这些站点）
+        let currentStopStationNames = new Set();
+        // 当前车次路径是否已展示
+        let trainRouteActive = false;
+
+        function grayOutExceptStops(stopNames) {
+            currentStopStationNames = new Set(stopNames || []);
+            // 站点：停靠站保留原色，其余置灰
+            const stopExpr = ['in', ['get', 'name'], ['literal', Array.from(currentStopStationNames)]];
+            allStationLabelIds.forEach(id => {
+                const orig = originalPaints[id];
+                try { map.setPaintProperty(id, 'text-color', ['case', stopExpr, orig['text-color'], '#888888']); } catch (e) {}
+                try { map.setPaintProperty(id, 'text-opacity', ['case', stopExpr, 1, 0.6]); } catch (e) {}
+            });
+            allStationCircleLayerIds.forEach(id => {
+                const orig = originalPaints[id];
+                try { map.setPaintProperty(id, 'circle-color', ['case', stopExpr, orig['circle-color'], '#888888']); } catch (e) {}
+                try { map.setPaintProperty(id, 'circle-opacity', ['case', stopExpr, 1, 0.6]); } catch (e) {}
+            });
+            allStationIconLayerIds.forEach(id => {
+                try { map.setPaintProperty(id, 'icon-opacity', ['case', stopExpr, 1, 0.25]); } catch (e) {}
+            });
+            // 线路：整体置灰，路径由 train-route 单独高亮
+            allLineLayerIds.forEach(id => {
+                const orig = originalPaints[id];
+                map.setPaintProperty(id, 'line-color', '#888888');
+                map.setPaintProperty(id, 'line-width', orig['line-width']);
+                map.setPaintProperty(id, 'line-opacity', 0.6);
+            });
+            allLineLabelLayerIds.forEach(id => {
+                try { map.setPaintProperty(id, 'text-color', '#888888'); } catch (e) {}
+                try { map.setPaintProperty(id, 'text-opacity', 0.7); } catch (e) {}
+            });
+        }
+
+        function drawTrainRoute(trainCode, routeData) {
+            // routeData: { stations: [{name:[lng,lat]}]（停靠站，圆形渲染）, train: { segmentName: {index, line:[[lng,lat]]} }（仅画线） }
+            // 坐标已由后端转为 WGS-84
+            const color = getTrainRouteColor(trainCode);
+            const features = [];
+            // 分线段按 index 排序后拼接为整条路径；若无 index 则按 key 顺序兜底
+            const segments = Object.entries(routeData.train || {})
+                .map(([key, val]) => ({ key, index: (val && val.index) || 0, line: (val && val.line) || [] }))
+                .sort((a, b) => a.index - b.index);
+            const pathCoords = [];
+            segments.forEach(seg => {
+                seg.line.forEach(pt => {
+                    if (Array.isArray(pt) && pt.length >= 2 && !isNaN(pt[0]) && !isNaN(pt[1])) {
+                        pathCoords.push([pt[0], pt[1]]);
+                    }
+                });
+            });
+            if (pathCoords.length >= 2) {
+                features.push({
+                    type: 'Feature',
+                    properties: { kind: 'route' },
+                    geometry: { type: 'LineString', coordinates: pathCoords }
+                });
+            }
+            // 停靠站（mapLine 的 stations 为真正的停靠站坐标，用圆形渲染；train 里的折点仅用于画线，不渲染）
+            (routeData.stations || []).forEach(st => {
+                const name = Object.keys(st)[0];
+                const coord = st[name];
+                if (Array.isArray(coord) && coord.length >= 2) {
+                    features.push({
+                        type: 'Feature',
+                        properties: { kind: 'station', name },
+                        geometry: { type: 'Point', coordinates: [coord[0], coord[1]] }
+                    });
+                }
+            });
+            if (map.getSource('train-route')) {
+                map.getSource('train-route').setData({ type: 'FeatureCollection', features });
+            }
+            map.setPaintProperty('train-route-line', 'line-color', color);
+            map.setPaintProperty('train-route-station', 'circle-color', color);
+            trainRouteActive = true;
+            // 视野聚焦到整条路径
+            if (pathCoords.length >= 2) {
+                const bounds = pathCoords.reduce((b, c) => b.extend(c), new maplibregl.LngLatBounds(pathCoords[0], pathCoords[0]));
+                map.fitBounds(bounds, { padding: 80, maxZoom: 12 });
+            }
+        }
+
+        function resetTrainRoute() {
+            trainRouteActive = false;
+            currentStopStationNames = new Set();
+            if (map.getSource('train-route')) {
+                map.getSource('train-route').setData({ type: 'FeatureCollection', features: [] });
+            }
+            // 恢复基础样式（由 resetHighlight 恢复线路/站点原始样式）
+            resetHighlight();
         }
 
         function renderTrainDetail(detailData) {
@@ -481,6 +611,7 @@
                 lineCard.style.display = 'block';
                 stationCard.style.display = 'none';
                 trainCard.style.display = 'none';
+                resetTrainRoute();
                 highlightLine(network, name);
                 cancelAllRequests();
                 // 加载途经车站
@@ -542,8 +673,6 @@
                     })
                     .then(data => {
                         if (data.success) {
-                            console.log('所属路局:', data.bureau);
-                            console.log('车务段:', data.belong);
                             // 你可以在这里更新页面上的显示
                             document.getElementById('station-bureau').textContent = data.bureau || '未知';
                             document.getElementById('station-belong').textContent = data.belong || '未知';
@@ -637,6 +766,25 @@
                                             renderTrainDetail(detailData.data);
                                             trainCard.style.display = 'block';
                                             stationCard.style.display = 'none';
+
+                                            // 收集该车次停靠的站名
+                                            const stops = detailData.data?.trainDetail?.stopTime;
+                                            const stopNames = Array.isArray(stops)
+                                                ? stops.map(s => s.stationName).filter(Boolean)
+                                                : [];
+
+                                            // 置灰：除停靠站外全部变灰（线路整体置灰，站点按停靠站保留原色）
+                                            grayOutExceptStops(stopNames);
+
+                                            // 拉取 RailGo 线路点并绘制行驶路径
+                                            trackedFetch(`${API_BASE}/api/train_map_line?train=${encodeURIComponent(train.train_code)}`)
+                                                .then(res => res.json())
+                                                .then(routeData => {
+                                                    if (routeData && routeData.success && routeData.data) {
+                                                        drawTrainRoute(train.train_code, routeData.data);
+                                                    }
+                                                })
+                                                .catch(err => { if (!isAbortError(err)) console.error('拉取车次线路点失败:', err); });
                                         } else {
                                             alert('查询车次详情失败');
                                         }
@@ -682,10 +830,11 @@
                 stationCard.style.display = 'block';
                 lineCard.style.display = 'none';
                 trainCard.style.display = 'none';
+                resetTrainRoute();
                 e.preventDefault();
             }
             else {
-                resetHighlight();
+                resetTrainRoute();
                 cancelAllRequests();
                 lineCard.style.display = 'none';
                 stationCard.style.display = 'none';

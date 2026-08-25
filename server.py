@@ -18,6 +18,75 @@ from flask import send_from_directory
 
 load_dotenv()
 
+# ========== 坐标转换：GCJ-02（火星坐标）→ WGS-84 ==========
+_EARTH_A = 6378245.0
+_EARTH_EE = 0.00669342162296594323
+
+
+def _out_of_china(lng, lat):
+    return not (72.004 <= lng <= 137.8347 and 0.8293 <= lat <= 55.8271)
+
+
+def _transform_lat(x, y):
+    ret = (-100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y
+           + 0.2 * math.sqrt(abs(x)))
+    ret += (20.0 * math.sin(6.0 * x * math.pi) + 20.0 * math.sin(2.0 * x * math.pi)) * 2.0 / 3.0
+    ret += (20.0 * math.sin(y * math.pi) + 40.0 * math.sin(y / 3.0 * math.pi)) * 2.0 / 3.0
+    ret += (160.0 * math.sin(y / 12.0 * math.pi) + 320.0 * math.sin(y * math.pi / 30.0)) * 2.0 / 3.0
+    return ret
+
+
+def _transform_lng(x, y):
+    ret = (300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * math.sqrt(abs(x)))
+    ret += (20.0 * math.sin(6.0 * x * math.pi) + 20.0 * math.sin(2.0 * x * math.pi)) * 2.0 / 3.0
+    ret += (20.0 * math.sin(x * math.pi) + 40.0 * math.sin(x / 3.0 * math.pi)) * 2.0 / 3.0
+    ret += (150.0 * math.sin(x / 12.0 * math.pi) + 300.0 * math.sin(x / 30.0 * math.pi)) * 2.0 / 3.0
+    return ret
+
+
+def _gcj_to_wgs_exact(lng, lat):
+    """单次 GCJ-02 → WGS-84 近似（正向偏移求反），配合迭代收敛。"""
+    if _out_of_china(lng, lat):
+        return lng, lat
+    dlat = _transform_lat(lng - 105.0, lat - 35.0)
+    dlng = _transform_lng(lng - 105.0, lat - 35.0)
+    radlat = lat / 180.0 * math.pi
+    magic = math.sin(radlat)
+    magic = 1 - _EARTH_EE * magic * magic
+    sqrtmagic = math.sqrt(magic)
+    dlat = (dlat * 180.0) / ((_EARTH_A * (1 - _EARTH_EE)) / (magic * sqrtmagic) * math.pi)
+    dlng = (dlng * 180.0) / (_EARTH_A / sqrtmagic * math.cos(radlat) * math.pi)
+    return lng - dlng, lat - dlat
+
+
+def gcj02_to_wgs84(lng, lat):
+    """GCJ-02 → WGS-84，迭代两次收敛，精度可优于 1 米。"""
+    if _out_of_china(lng, lat):
+        return lng, lat
+    wlng, wlat = _gcj_to_wgs_exact(lng, lat)
+    for _ in range(3):
+        # 用当前估计值算正向偏移，反推更精确的 WGS-84
+        glng, glat = wgs84_to_gcj02(wlng, wlat)
+        wlng += lng - glng
+        wlat += lat - glat
+    return wlng, wlat
+
+
+def wgs84_to_gcj02(lng, lat):
+    """WGS-84 → GCJ-02 正向转换（供迭代反推使用）。"""
+    if _out_of_china(lng, lat):
+        return lng, lat
+    dlat = _transform_lat(lng - 105.0, lat - 35.0)
+    dlng = _transform_lng(lng - 105.0, lat - 35.0)
+    radlat = lat / 180.0 * math.pi
+    magic = math.sin(radlat)
+    magic = 1 - _EARTH_EE * magic * magic
+    sqrtmagic = math.sqrt(magic)
+    dlat = (dlat * 180.0) / ((_EARTH_A * (1 - _EARTH_EE)) / (magic * sqrtmagic) * math.pi)
+    dlng = (dlng * 180.0) / (_EARTH_A / sqrtmagic * math.cos(radlat) * math.pi)
+    return lng + dlng, lat + dlat
+
+
 db_host = os.getenv('DB_HOST')
 db_port = os.getenv('DB_PORT')
 db_user = os.getenv('DB_USER')
@@ -650,6 +719,54 @@ def train_detail():
         return jsonify({"success": True, "data": data})
     else:
         return jsonify({"success": False, "message": "查询失败"})
+
+@app.route('/api/train_map_line')
+def train_map_line():
+    """代理 RailGo 列车运行线路点接口（/api/v2/mapLine），返回该车次行驶路径。
+
+    返回结构与 RailGo 一致：data.stations（车站坐标）+ data.train（分段折线，按 index 排序）。
+    原始坐标为 GCJ-02（火星坐标系），此处统一转换为 WGS-84 以对齐地图底图。
+    """
+    train = request.args.get('train', '').strip()
+    if not train:
+        return jsonify({"success": False, "message": "缺少 train 参数"}), 400
+    if client_disconnected():
+        return jsonify({"success": False, "message": "客户端已断开"})
+    url = f"https://rg-api.zenglingkun.cn/api/v2/mapLine"
+    try:
+        resp = requests.get(url, params={"train": train}, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        return jsonify({"success": False, "message": f"请求 RailGo mapLine 失败: {str(e)}"}), 502
+
+    # 坐标转换 GCJ-02 → WGS-84
+    d = data.get("data")
+    if isinstance(d, dict):
+        # stations: [{ "站名": [lng, lat] }, ...]
+        stations = d.get("stations")
+        if isinstance(stations, list):
+            for st in stations:
+                if isinstance(st, dict):
+                    for name, coord in st.items():
+                        if isinstance(coord, list) and len(coord) >= 2:
+                            try:
+                                coord[0], coord[1] = gcj02_to_wgs84(float(coord[0]), float(coord[1]))
+                            except (TypeError, ValueError):
+                                pass
+        # train: { "分段名": { "index": n, "line": [[lng, lat], ...] }, ... }
+        train_segs = d.get("train")
+        if isinstance(train_segs, dict):
+            for seg_name, seg in train_segs.items():
+                line = seg.get("line") if isinstance(seg, dict) else None
+                if isinstance(line, list):
+                    for pt in line:
+                        if isinstance(pt, list) and len(pt) >= 2:
+                            try:
+                                pt[0], pt[1] = gcj02_to_wgs84(float(pt[0]), float(pt[1]))
+                            except (TypeError, ValueError):
+                                pass
+    return jsonify(data)
 
 @app.route('/api/update_line', methods=['POST'])
 def update_line():
