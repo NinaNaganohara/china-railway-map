@@ -758,6 +758,8 @@
                             const tdDelay = tr.lastElementChild;
                             tr.addEventListener('click', (ev) => {
                                 ev.stopPropagation();
+                                // 立即放弃其他车次的查询，立刻跳转到车次详情
+                                cancelAllRequests();
                                 trackedFetch(`${API_BASE}/api/train_detail?train_code=${encodeURIComponent(train.train_code)}&date=${queryDate}`)
                                     .then(res => res.json())
                                     .then(detailData => {
