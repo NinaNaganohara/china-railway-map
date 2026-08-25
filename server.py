@@ -364,11 +364,11 @@ def get_lines():
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, name, ref, network, operator, colour, abbreviation, source_type, is_high_speed, classification, design_speed, is_open,
+                SELECT id, name, ref, network, operator, colour, abbreviation, source_type, is_high_speed, classification, design_speed, is_open, is_divided,
                        ST_AsGeoJSON(geometry)::json AS geometry
                 FROM transport_lines
                 WHERE source_type = %s
-                    AND ((is_only_freight IS NULL OR is_only_freight = false) AND (is_abandoned IS NULL OR is_abandoned =false))
+                    AND ((is_only_freight IS NULL OR is_only_freight = false) AND (is_abandoned IS NULL OR is_abandoned = false) AND (is_open = true OR is_open IS NULL))
                     AND (deleted IS NULL OR deleted = false)
             """, (source_type,))
             rows = cur.fetchall()
@@ -388,9 +388,10 @@ def get_lines():
                         "is_high_speed": row[8],
                         "classification": row[9],
                         "design_speed": row[10],
-                        "is_open": row[11]
+                        "is_open": row[11],
+                        "is_divided": row[12]
                     },
-                    "geometry": row[12]
+                    "geometry": row[13]
                 })
             return jsonify({"type": "FeatureCollection", "features": features})
 
@@ -794,7 +795,7 @@ def update_line():
         return jsonify({"success": False, "message": "缺少 id"}), 400
 
     # 允许更新的字段（新增 is_high_speed）
-    fields = ['name', 'network', 'colour', 'abbreviation', 'ref', 'operator', 'is_only_freight', 'is_high_speed', 'is_abandoned', 'classification', 'design_speed', 'is_open']
+    fields = ['name', 'network', 'colour', 'abbreviation', 'ref', 'operator', 'is_only_freight', 'is_high_speed', 'is_abandoned', 'classification', 'design_speed', 'is_open', 'is_divided']
     updates = []
     values = []
     for field in fields:

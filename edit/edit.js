@@ -102,17 +102,18 @@
                 <label>运营商: <input name="operator" value="${props.operator || ''}"></label><br>
                 <label>铁路等级：
                     <select name="classification">
-                        <option value=0 ${props.classification === 0}>高速铁路</option>
-                        <option value=1 ${props.classification === 1}>城际铁路</option>
-                        <option value=2 ${props.classification === 2}>国铁Ⅰ级</option>
-                        <option value=3 ${props.classification === 3}>国铁Ⅱ级</option>
-                        <option value=4 ${props.classification === 4}>国铁Ⅲ级</option>
-                        <option value=5 ${props.classification === 5}>国铁Ⅳ级</option>
-                        <option value=6 ${props.classification === 6}>地铁Ⅰ级</option>
-                        <option value=7 ${props.classification === 7}>地铁Ⅱ级</option>
+                        <option value="0" ${props.classification === 0 ? 'selected' : ''}>高速铁路</option>
+                        <option value="1" ${props.classification === 1 ? 'selected' : ''}>城际铁路</option>
+                        <option value="2" ${props.classification === 2 ? 'selected' : ''}>国铁Ⅰ级</option>
+                        <option value="3" ${props.classification === 3 ? 'selected' : ''}>国铁Ⅱ级</option>
+                        <option value="4" ${props.classification === 4 ? 'selected' : ''}>国铁Ⅲ级</option>
+                        <option value="5" ${props.classification === 5 ? 'selected' : ''}>国铁Ⅳ级</option>
+                        <option value="6" ${props.classification === 6 ? 'selected' : ''}>地铁Ⅰ级</option>
+                        <option value="7" ${props.classification === 7 ? 'selected' : ''}>地铁Ⅱ级</option>
+                        <option value="" ${props.classification == null ? 'selected' : ''}>未选择</option>
                     </select>
                 </label><br>
-                <label>设计时速：<input name="design_speed" value=${props.design_speed || ''}></label><br>
+                <label>设计时速：<input name="design_speed" value="${props.design_speed ?? ''}"></label><br>
                 <label>货运专线:
                     <select name="is_only_freight">
                         <option value="t" ${props.is_only_freight === 't' ? 'selected' : ''}>是</option>
@@ -135,6 +136,12 @@
                     <select name="is_open">
                         <option value="t" ${props.is_open === true || props.is_open === 't' ? 'selected' : ''}>是</option>
                         <option value="f" ${!props.is_open || props.is_open === 'f' ? 'selected' : ''}>否</option>
+                    </select>
+                </label><br>
+                <label>分段:
+                    <select name="is_divided">
+                        <option value="t" ${props.is_divided === true || props.is_divided === 't' ? 'selected' : ''}>是</option>
+                        <option value="f" ${!props.is_divided || props.is_divided === 'f' ? 'selected' : ''}>否</option>
                     </select>
                 </label>
             `;
@@ -173,6 +180,19 @@
         for (let [key, value] of formData.entries()) {
             if (key !== 'id') payload[key] = value;
         }
+
+        // -------- 新增转换逻辑 --------
+        // 设计时速：空字符串 → null
+        if (payload.design_speed === '') {
+            payload.design_speed = null;
+        }
+        // 铁路等级：空字符串 → null，非空转为数字
+        if (payload.classification === '') {
+            payload.classification = null;
+        } else if (payload.classification !== undefined) {
+            payload.classification = Number(payload.classification);
+        }
+        // -----------------------------
 
         const endpoint = editingFeature.type === 'line' ? '/api/update_line' : '/api/update_station';
         try {
