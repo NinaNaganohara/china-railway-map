@@ -745,6 +745,42 @@
                             return getSortTime(a).localeCompare(getSortTime(b));
                         });
                         const now = new Date();
+                        // 标记当前已选中的车次详情请求，用于点击后阻止预查询懒加载继续补发请求
+                        let stationViewAbandoned = false;
+
+                        // 计算某车次"正晚点"文案（复用同一套逻辑）
+                        function renderDelayCell(tdDelay, detailData) {
+                            if (!detailData || !detailData.success) { tdDelay.textContent = '查询失败'; return; }
+                            const stops = detailData.data?.trainDetail?.stopTime;
+                            if (!stops || !Array.isArray(stops)) { tdDelay.textContent = '无数据'; return; }
+                            const stop = stops.find(s => s.stationName === stationName);
+                            if (!stop) { tdDelay.textContent = '未匹配'; return; }
+                            const ticketEarly = stop.ticketEarly;
+                            const ticketDelay = stop.ticketDelay;
+                            let delayMinutes = 0;
+                            if (ticketEarly !== undefined && ticketEarly !== null && ticketEarly !== '') delayMinutes = -Math.abs(parseInt(ticketEarly, 10));
+                            else if (ticketDelay !== undefined && ticketDelay !== null) delayMinutes = parseInt(ticketDelay, 10) || 0;
+                            else { tdDelay.textContent = '无状态'; return; }
+                            const planArriveStr = stop.arriveTime;
+                            if (!planArriveStr || planArriveStr === '----' || planArriveStr === '') { tdDelay.textContent = '无到达时间'; return; }
+                            const year = parseInt(queryDate.substring(0,4)), month = parseInt(queryDate.substring(4,6))-1, day = parseInt(queryDate.substring(6,8));
+                            const arrHour = parseInt(planArriveStr.substring(0,2)), arrMinute = parseInt(planArriveStr.substring(2,4));
+                            const planDate = new Date(year, month, day, arrHour, arrMinute);
+                            const actualDate = new Date(planDate.getTime() + delayMinutes*60000);
+                            const isPast = actualDate < now;
+                            const absDelay = Math.abs(delayMinutes);
+                            if (delayMinutes < 0) {
+                                tdDelay.textContent = isPast ? `早到${absDelay}分钟` : `预计早到${absDelay}分钟`;
+                                tdDelay.style.color = '#009543';
+                            } else if (delayMinutes > 0) {
+                                tdDelay.textContent = isPast ? `晚点${absDelay}分钟` : `预计晚点${absDelay}分钟`;
+                                tdDelay.style.color = '#ff2600';
+                            } else {
+                                tdDelay.textContent = isPast ? '正点' : '预计正点';
+                                tdDelay.style.color = '';
+                            }
+                        }
+
                         trains.forEach(train => {
                             const tr = document.createElement('tr');
                             tr.innerHTML = `
@@ -756,9 +792,31 @@
                                 <td style="width:90px;padding:4px;">查询中...</td>
                             `;
                             const tdDelay = tr.lastElementChild;
+                            let delayLoaded = false;
+                            let delayLoading = false;
+
+                            // 懒加载"正晚点"：仅当该行进入视口时才查询，避免一次性并发大量 train_detail
+                            function loadDelayIfNeeded() {
+                                if (delayLoaded || delayLoading || stationViewAbandoned) return;
+                                const rect = tr.getBoundingClientRect();
+                                const wrapper = tbody.closest('.station-table-wrapper') || document.documentElement;
+                                const inView = rect.top < wrapper.getBoundingClientRect().bottom && rect.bottom > wrapper.getBoundingClientRect().top;
+                                if (!inView) return;
+                                delayLoading = true;
+                                trackedFetch(`${API_BASE}/api/train_detail?train_code=${encodeURIComponent(train.train_code)}&date=${queryDate}`)
+                                    .then(res => res.json())
+                                    .then(detailData => {
+                                        delayLoaded = true;
+                                        delayLoading = false;
+                                        renderDelayCell(tdDelay, detailData);
+                                    })
+                                    .catch((err) => { delayLoading = false; if (!isAbortError(err)) tdDelay.textContent = '网络错误'; });
+                            }
+
                             tr.addEventListener('click', (ev) => {
                                 ev.stopPropagation();
-                                // 立即放弃其他车次的查询，立刻跳转到车次详情
+                                // 立即放弃其他车次的（预）查询，立刻跳转到车次详情
+                                stationViewAbandoned = true;
                                 cancelAllRequests();
                                 trackedFetch(`${API_BASE}/api/train_detail?train_code=${encodeURIComponent(train.train_code)}&date=${queryDate}`)
                                     .then(res => res.json())
@@ -792,40 +850,14 @@
                                         }
                                     });
                             });
-                            trackedFetch(`${API_BASE}/api/train_detail?train_code=${encodeURIComponent(train.train_code)}&date=${queryDate}`)
-                                .then(res => res.json())
-                                .then(detailData => {
-                                    if (!detailData.success) { tdDelay.textContent = '查询失败'; return; }
-                                    const stops = detailData.data?.trainDetail?.stopTime;
-                                    if (!stops || !Array.isArray(stops)) { tdDelay.textContent = '无数据'; return; }
-                                    const stop = stops.find(s => s.stationName === stationName);
-                                    if (!stop) { tdDelay.textContent = '未匹配'; return; }
-                                    const ticketEarly = stop.ticketEarly;
-                                    const ticketDelay = stop.ticketDelay;
-                                    let delayMinutes = 0;
-                                    if (ticketEarly !== undefined && ticketEarly !== null && ticketEarly !== '') delayMinutes = -Math.abs(parseInt(ticketEarly, 10));
-                                    else if (ticketDelay !== undefined && ticketDelay !== null) delayMinutes = parseInt(ticketDelay, 10) || 0;
-                                    else { tdDelay.textContent = '无状态'; return; }
-                                    const planArriveStr = stop.arriveTime;
-                                    if (!planArriveStr || planArriveStr === '----' || planArriveStr === '') { tdDelay.textContent = '无到达时间'; return; }
-                                    const year = parseInt(queryDate.substring(0,4)), month = parseInt(queryDate.substring(4,6))-1, day = parseInt(queryDate.substring(6,8));
-                                    const arrHour = parseInt(planArriveStr.substring(0,2)), arrMinute = parseInt(planArriveStr.substring(2,4));
-                                    const planDate = new Date(year, month, day, arrHour, arrMinute);
-                                    const actualDate = new Date(planDate.getTime() + delayMinutes*60000);
-                                    const isPast = actualDate < now;
-                                    const absDelay = Math.abs(delayMinutes);
-                                    if (delayMinutes < 0) {
-                                        tdDelay.textContent = isPast ? `早到${absDelay}分钟` : `预计早到${absDelay}分钟`;
-                                        tdDelay.style.color = '#009543';
-                                    } else if (delayMinutes > 0) {
-                                        tdDelay.textContent = isPast ? `晚点${absDelay}分钟` : `预计晚点${absDelay}分钟`;
-                                        tdDelay.style.color = '#ff2600';
-                                    } else {
-                                        tdDelay.textContent = isPast ? '正点' : '预计正点';
-                                        tdDelay.style.color = '';
-                                    }
-                                })
-                                .catch((err) => { if (!isAbortError(err)) tdDelay.textContent = '网络错误'; });
+
+                            const wrapper = tbody.closest('.station-table-wrapper');
+                            if (wrapper) {
+                                wrapper.addEventListener('scroll', loadDelayIfNeeded, { passive: true });
+                            }
+                            // 初始尝试一次（若已可见则立即加载）
+                            requestAnimationFrame(loadDelayIfNeeded);
+
                             tbody.appendChild(tr);
                         });
                     }).catch((err) => { if (!isAbortError(err)) tbody.innerHTML = '<tr><td colspan="6">网络错误</td></tr>'; });

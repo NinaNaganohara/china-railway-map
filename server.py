@@ -211,6 +211,11 @@ def search_stations(keyword, limit=10):
     return results
 
 # ========== 12306 查询 ==========
+# 上游 12306/RailGo 请求超时（秒）。值小可让被"放弃"的请求更快让出连接，
+# 避免在 Nginx 代理下客户端 abort 无法传递到应用时，仍长时间占据 worker。
+UPSTREAM_TIMEOUT = float(os.getenv('UPSTREAM_TIMEOUT', '3'))
+
+
 def query_station_board(station_input, date_str=None):
     if date_str:
         date_str = date_str.replace("-", "")
@@ -235,7 +240,7 @@ def query_station_board(station_input, date_str=None):
         "X-Requested-With": "XMLHttpRequest"
     }
     try:
-        resp = requests.post(url, data=params, headers=headers, timeout=4)
+        resp = requests.post(url, data=params, headers=headers, timeout=UPSTREAM_TIMEOUT)
         resp.encoding = "utf-8"
         if resp.status_code != 200:
             return {"success": False, "message": f"请求失败，状态码: {resp.status_code}"}
@@ -285,7 +290,7 @@ def query_train_info(train_code, start_day=None):
         "X-Requested-With": "XMLHttpRequest"
     }
     try:
-        response = requests.post(url, data=data, headers=headers, timeout=4)
+        response = requests.post(url, data=data, headers=headers, timeout=UPSTREAM_TIMEOUT)
         response.raise_for_status()
         result = response.json()
         if result.get("status") is True:
@@ -307,14 +312,21 @@ CORS(app)
 def client_disconnected():
     """检测当前 HTTP 请求的客户端是否已断开连接。
 
-    前端 abort() 会关闭底层 TCP 连接。这里通过 Werkzeug 开发服务器写入
-    environ 的底层 socket（'werkzeug.socket'）做非阻塞探测：
+    前端 abort() 会关闭浏览器到服务器的连接。这里遍历 WSGI environ 里可能
+    存在的底层 socket 做非阻塞探测：
+    - Werkzeug 开发服务器注入 'werkzeug.socket'
+    - Gunicorn 注入 'gunicorn.socket'
+
     若 socket 可读且读到的为空（对端已关闭），说明客户端已断开。
 
-    仅对 GET 等无请求体的接口安全（请求体已读尽）。
+    仅对 GET 等无请求体的接口安全（请求体已读尽）。注意：当 Nginx 反向代理
+    位于前端时，浏览器 abort 只断开浏览器↔Nginx，Nginx↔应用进程的连接未必
+    立刻关闭，因此本探测只能覆盖"应用直接对外"或 Nginx 已把断开透传的场景；
+    对经过代理仍无法感知的情况，仍需靠前端懒加载 + 缩短上游超时兜底。
     """
     try:
-        sock = request.environ.get('werkzeug.socket')
+        sock = (request.environ.get('werkzeug.socket')
+                or request.environ.get('gunicorn.socket'))
         if sock is None:
             return False
         # 非阻塞探测：socket 可读且 recv 返回 b'' 表示对端已关闭连接
@@ -327,7 +339,10 @@ def client_disconnected():
         except (ConnectionResetError, ConnectionAbortedError, OSError):
             return True
         finally:
-            sock.setblocking(True)
+            try:
+                sock.setblocking(True)
+            except OSError:
+                pass
         if data == b'':
             return True
         return False
