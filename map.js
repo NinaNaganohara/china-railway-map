@@ -590,10 +590,24 @@
                 const props = lineFeatures[0].properties;
                 const name = props.name || props['name:zh'] || '未知线路';
                 const network = props.network || props.operator || '中国铁路';
+                const classificationMap = {
+                    0: '高速铁路',
+                    1: '城际铁路',
+                    2: '国铁Ⅰ级',
+                    3: '国铁Ⅱ级',
+                    4: '国铁Ⅲ级',
+                    5: '国铁Ⅳ级',
+                    6: '地铁Ⅰ级',
+                    7: '地铁Ⅱ级',
+                };
+                const classification = classificationMap[props.classification] || '数据库尚未更新（2000多条线路，已累死）';
+                const design_speed = props.design_speed || '数据库尚未更新（2000多条线路，已累死）';
                 const colour = getLineColor({ properties: props });
                 document.getElementById('card-color-bar').style.backgroundColor = colour;
                 document.getElementById('card-line-name').textContent = name;
                 document.getElementById('card-network').textContent = network;
+                document.getElementById('classification').textContent = classification;
+                document.getElementById('design_speed').textContent = design_speed + ' km/h';
                 document.getElementById('card-type').textContent = '铁路';
                 const logoImg = document.getElementById('card-network-logo-img');
                 logoImg.src = './assets/icons/中国铁路.svg';

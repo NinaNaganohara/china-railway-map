@@ -364,7 +364,7 @@ def get_lines():
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, name, ref, network, operator, colour, abbreviation, source_type, is_high_speed,
+                SELECT id, name, ref, network, operator, colour, abbreviation, source_type, is_high_speed, classification, design_speed, is_open,
                        ST_AsGeoJSON(geometry)::json AS geometry
                 FROM transport_lines
                 WHERE source_type = %s
@@ -385,9 +385,12 @@ def get_lines():
                         "colour": row[5] if row[5] else None,
                         "abbreviation": row[6],
                         "source_type": row[7],
-                        "is_high_speed": row[8]
+                        "is_high_speed": row[8],
+                        "classification": row[9],
+                        "design_speed": row[10],
+                        "is_open": row[11]
                     },
-                    "geometry": row[9]
+                    "geometry": row[12]
                 })
             return jsonify({"type": "FeatureCollection", "features": features})
 
@@ -791,7 +794,7 @@ def update_line():
         return jsonify({"success": False, "message": "缺少 id"}), 400
 
     # 允许更新的字段（新增 is_high_speed）
-    fields = ['name', 'network', 'colour', 'abbreviation', 'ref', 'operator', 'is_only_freight', 'is_high_speed', 'is_abandoned']
+    fields = ['name', 'network', 'colour', 'abbreviation', 'ref', 'operator', 'is_only_freight', 'is_high_speed', 'is_abandoned', 'classification', 'design_speed', 'is_open']
     updates = []
     values = []
     for field in fields:
