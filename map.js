@@ -109,6 +109,7 @@
                 id: 'railway-line',
                 type: 'line',
                 source: 'railway-lines',
+                filter: ['!', ['==', ['get', 'is_divided'], true]],
                 paint: {
                     'line-color': [
                         'case',
@@ -194,6 +195,7 @@
             id: 'railway-label',
             type: 'symbol',
             source: 'railway-lines',
+            filter: ['!', ['==', ['get', 'is_divided'], true]],
             layout: {
                 'symbol-placement': 'line',
                 'text-field': ['get', 'name'],
@@ -550,12 +552,12 @@
         }
 
         // ========== 定位（统一供卡片与搜索使用；用完整数据，避免分块裁剪） ==========
-        function focusOnLine(lineName) {
+        function focusOnLine(lineId) {
             // 从完整线路数据里按名称匹配所有同名段，合并展示整条线路
             if (!allLinesData || !allLinesData.features) return;
             const coords = [];
             allLinesData.features.forEach(f => {
-                if ((f.properties.name || '') === lineName && f.geometry) {
+                if ((f.properties.id || '') === lineId && f.geometry) {
                     collectCoords(f.geometry, coords);
                 }
             });
@@ -587,7 +589,17 @@
             const stationFeatures = map.queryRenderedFeatures(e.point, { layers: allStationFeatureLayerIds });
 
             if (lineFeatures.length > 0) {
-                const props = lineFeatures[0].properties;
+                let props = lineFeatures[0].properties;
+                const parentLineId = props.parent_line_id;
+                if (parentLineId) {
+                    const parentFeatures = map.querySourceFeatures('railway-lines', {
+                        filter: ['==', ['get', 'id'], parentLineId]
+                    });
+                    if (parentFeatures.length > 0) {
+                        props = parentFeatures[0].properties;
+                    }
+                }
+
                 const name = props.name || props['name:zh'] || '未知线路';
                 const network = props.network || props.operator || '中国铁路';
                 const classificationMap = {
@@ -600,14 +612,82 @@
                     6: '地铁Ⅰ级',
                     7: '地铁Ⅱ级',
                 };
-                const classification = classificationMap[props.classification] || '数据库尚未更新（2000多条线路，已累死）';
-                const design_speed = props.design_speed || '数据库尚未更新（2000多条线路，已累死）';
+
+                // ===== 分段数据获取与类型转换 =====
+                let segments = props.segments;
+                if (typeof segments === 'string') {
+                    try { segments = JSON.parse(segments); } catch (e) { segments = []; }
+                }
+                if (!Array.isArray(segments)) segments = [];
+
+                // ===== 速度合并（只看设计速度，忽略等级） =====
+                function mergeBySpeed(segments) {
+                    if (!segments.length) return [];
+                    const speedRuns = [];
+                    let current = { start_station: segments[0].start_station, end_station: segments[0].end_station, speed: segments[0].design_speed };
+                    for (let i = 1; i < segments.length; i++) {
+                        const seg = segments[i];
+                        if (seg.design_speed === current.speed) {
+                            current.end_station = seg.end_station;
+                        } else {
+                            speedRuns.push(current);
+                            current = { start_station: seg.start_station, end_station: seg.end_station, speed: seg.design_speed };
+                        }
+                    }
+                    speedRuns.push(current);
+                    return speedRuns;
+                }
+
+                // ===== 等级合并（只看等级，忽略速度） =====
+                function mergeByClassification(segments) {
+                    if (!segments.length) return [];
+                    const classRuns = [];
+                    let current = { start_station: segments[0].start_station, end_station: segments[0].end_station, classification: segments[0].classification };
+                    for (let i = 1; i < segments.length; i++) {
+                        const seg = segments[i];
+                        if (seg.classification === current.classification) {
+                            current.end_station = seg.end_station;
+                        } else {
+                            classRuns.push(current);
+                            current = { start_station: seg.start_station, end_station: seg.end_station, classification: seg.classification };
+                        }
+                    }
+                    classRuns.push(current);
+                    return classRuns;
+                }
+
+                const speedRuns = mergeBySpeed(segments);
+                const classRuns = mergeByClassification(segments);
+                // 生成显示 HTML
+                let designSpeedHtml, classificationHtml;
+
+                if (speedRuns.length > 0) {
+                    designSpeedHtml = speedRuns.map(run =>
+                        `${run.start_station}-${run.end_station}：${run.speed} km/h`
+                    ).join('<br>');
+                } else {
+                    designSpeedHtml = props.design_speed ? props.design_speed + ' km/h' : '数据库尚未更新（2000多条线路，已累死）';
+                }
+                
+                if (classRuns.length === 1) {
+                    classificationHtml = classRuns.map(run =>
+                        `${classificationMap[run.classification] || '未知'}`
+                    ).join('<br>');
+                } else if (classRuns.length > 0) {
+                    classificationHtml = classRuns.map(run =>
+                        `${run.start_station}-${run.end_station}：${classificationMap[run.classification] || '未知'}`
+                    ).join('<br>');
+                } else {
+                    classificationHtml = classificationMap[props.classification] || '数据库尚未更新（2000多条线路，已累死）';
+                }
+
+                // ===== 填充卡片 =====
                 const colour = getLineColor({ properties: props });
                 document.getElementById('card-color-bar').style.backgroundColor = colour;
                 document.getElementById('card-line-name').textContent = name;
                 document.getElementById('card-network').textContent = network;
-                document.getElementById('classification').textContent = classification;
-                document.getElementById('design_speed').textContent = design_speed + ' km/h';
+                document.getElementById('classification').innerHTML = classificationHtml;
+                document.getElementById('design_speed').innerHTML = designSpeedHtml;
                 document.getElementById('card-type').textContent = '铁路';
                 const logoImg = document.getElementById('card-network-logo-img');
                 logoImg.src = './assets/icons/中国铁路.svg';
@@ -628,7 +708,8 @@
                 resetTrainRoute();
                 highlightLine(network, name);
                 cancelAllRequests();
-                // 加载途经车站
+
+                // 加载途经车站（保持原有逻辑）
                 const lineStationsList = document.getElementById('line-stations-list');
                 lineStationsList.innerHTML = '加载中...';
                 trackedFetch(`${API_BASE}/api/line_stations?line_id=${props.id}`)
@@ -644,27 +725,25 @@
                             return;
                         }
                         lineStationsList.innerHTML = '';
-                            stations.forEach(s => {
-                                const chip = document.createElement('span');
-                                chip.textContent = s.name;
-
-                                // ===== Grid 父级下的纯文字修复方案 =====
-                                chip.style.setProperty('display', 'inline', 'important');        // 改为行内元素
-                                chip.style.setProperty('width', 'fit-content', 'important');     // 宽度自适应内容（关键）
-                                chip.style.setProperty('justify-self', 'start', 'important');    // 水平靠左，不拉伸
-                                chip.style.setProperty('align-self', 'start', 'important');      // 垂直靠上，不拉伸
-                                chip.style.setProperty('padding', '1px', 'important');
-                                chip.style.setProperty('margin', '0', 'important');      // 保留文字间距
-                                chip.style.setProperty('cursor', 'pointer', 'important');
-
-                                chip.addEventListener('click', (ev) => {
-                                    ev.stopPropagation();
-                                    focusOnStation(s.id);
-                                });
-                                lineStationsList.appendChild(chip);
+                        stations.forEach(s => {
+                            const chip = document.createElement('span');
+                            chip.textContent = s.name;
+                            chip.style.setProperty('display', 'inline', 'important');
+                            chip.style.setProperty('width', 'fit-content', 'important');
+                            chip.style.setProperty('justify-self', 'start', 'important');
+                            chip.style.setProperty('align-self', 'start', 'important');
+                            chip.style.setProperty('padding', '1px', 'important');
+                            chip.style.setProperty('margin', '0', 'important');
+                            chip.style.setProperty('cursor', 'pointer', 'important');
+                            chip.addEventListener('click', (ev) => {
+                                ev.stopPropagation();
+                                focusOnStation(s.id);
                             });
+                            lineStationsList.appendChild(chip);
+                        });
                     })
                     .catch((err) => { if (!isAbortError(err)) lineStationsList.innerHTML = '<span style="color:#c00;">网络错误</span>'; });
+
                 e.preventDefault();
             }
             else if (stationFeatures.length > 0) {
@@ -720,15 +799,18 @@
                         }
                         stationLinesList.innerHTML = '';
                         lines.forEach(l => {
+                            const parent_line_id = l.parent_line_id;
+                            if (parent_line_id) return;
                             const colour = getLineColor({ properties: l });
                             const chip = document.createElement('span');
+                            const line_id = l.id;
                             chip.textContent = l.name;
                             chip.style.cssText = `display:inline-block; margin:2px 4px 2px 0; padding:0 7px 2px 7px; background:${colour}; color:#fff; border-radius:8px; font-size:14px; font-weight:bold; cursor:pointer;`;
                             chip.addEventListener('click', (ev) => {
                                 ev.stopPropagation();
                                 resetHighlight();
                                 highlightLine(l.network || '', l.name);
-                                focusOnLine(l.name);
+                                focusOnLine(line_id);
                             });
                             stationLinesList.appendChild(chip);
                         });
@@ -906,6 +988,8 @@
                 if (allLinesData && allLinesData.features) {
                     allLinesData.features.forEach(f => {
                         const p = f.properties || {};
+                        // 跳过子线路，只保留父级线路
+                        if (p.parent_line_id) return;
                         const name = (p.name || '');
                         const ref = (p.ref || '');
                         if (name.toLowerCase().includes(kw) || ref.toLowerCase().includes(kw)) {
@@ -948,7 +1032,10 @@
                                 searchInput.value = '';
                                 resetHighlight();
                                 highlightLine(item.properties.network || '', item.properties.name);
-                                focusOnLine(item.properties.name);
+                                let line_id = item.properties.id;
+                                const parent_line_id = item.properties.parent_line_id;
+                                if (parent_line_id) line_id = parent_line_id;
+                                focusOnLine(line_id);
                             });
                         } else {
                             div.innerHTML = `🚉 ${item.properties.name}`;

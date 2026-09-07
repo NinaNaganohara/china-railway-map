@@ -364,16 +364,44 @@ def get_lines():
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, name, ref, network, operator, colour, abbreviation, source_type, is_high_speed, classification, design_speed, is_open, is_divided,
-                       ST_AsGeoJSON(geometry)::json AS geometry
-                FROM transport_lines
-                WHERE source_type = %s
-                    AND ((is_only_freight IS NULL OR is_only_freight = false) AND (is_abandoned IS NULL OR is_abandoned = false) AND (is_open = true OR is_open IS NULL))
-                    AND (deleted IS NULL OR deleted = false)
+                SELECT 
+                    tl.id, tl.name, tl.ref, tl.network, tl.operator, tl.colour,
+                    tl.abbreviation, tl.source_type, tl.is_high_speed,
+                    tl.classification, tl.design_speed, tl.is_open, tl.is_divided,
+                    tl.parent_line_id,
+                    ST_AsGeoJSON(tl.geometry)::json AS geometry,
+                    COALESCE(
+                        (
+                            SELECT json_agg(
+                                json_build_object(
+                                    'start_station', ls.start_station,
+                                    'end_station', ls.end_station,
+                                    'design_speed', ls.design_speed,
+                                    'classification', ls.classification
+                                ) ORDER BY ls.id
+                            )
+                            FROM line_segments ls
+                            WHERE ls.line_id = tl.id
+                        ),
+                        '[]'::json
+                    ) AS segments
+                FROM transport_lines tl
+                WHERE tl.source_type = %s
+                    AND (tl.is_only_freight IS NULL OR tl.is_only_freight = false) 
+                    AND (tl.is_abandoned IS NULL OR tl.is_abandoned = false) 
+                    AND (tl.is_open = true OR tl.is_open IS NULL)
+                    AND (tl.deleted IS NULL OR tl.deleted = false)
             """, (source_type,))
             rows = cur.fetchall()
             features = []
             for row in rows:
+                # 处理 segments 字段（psycopg2 返回字符串，需转换为 Python 对象）
+                segments_raw = row[15]
+                if isinstance(segments_raw, str):
+                    segments = json.loads(segments_raw)
+                else:
+                    segments = segments_raw or []
+
                 features.append({
                     "type": "Feature",
                     "properties": {
@@ -389,9 +417,11 @@ def get_lines():
                         "classification": row[9],
                         "design_speed": row[10],
                         "is_open": row[11],
-                        "is_divided": row[12]
+                        "is_divided": row[12],
+                        "parent_line_id": row[13],
+                        "segments": segments
                     },
-                    "geometry": row[13]
+                    "geometry": row[14]
                 })
             return jsonify({"type": "FeatureCollection", "features": features})
 
@@ -504,7 +534,7 @@ def station_lines():
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT l.id, l.name, l.ref, l.network, l.colour, l.abbreviation
+                SELECT l.id, l.name, l.ref, l.network, l.colour, l.abbreviation, l.is_high_speed, l.parent_line_id
                 FROM station_line sl
                 JOIN transport_lines l ON l.id = sl.line_id
                 WHERE sl.station_id = %s
@@ -516,7 +546,8 @@ def station_lines():
             """, (station_id,))
             rows = cur.fetchall()
             lines = [{"id": r[0], "name": r[1], "ref": r[2], "network": r[3],
-                      "colour": r[4], "abbreviation": r[5]} for r in rows]
+                      "colour": r[4], "abbreviation": r[5], "is_high_speed": r[6],
+                      "parent_line_id": r[7]} for r in rows]
             return jsonify({"success": True, "count": len(lines), "lines": lines})
 
 # ========== 线路车站顺序（几何投影排序） ==========
