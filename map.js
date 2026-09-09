@@ -531,6 +531,40 @@
             body.innerHTML = html;
         }
 
+        function renderTrainRouteAndDetail(trainCode, queryDate) {
+            trackedFetch(`${API_BASE}/api/train_detail?train_code=${trainCode}&date=${queryDate}`)
+            .then(res => res.json())
+            .then(detailData => {
+                if (detailData.success) {
+                    document.getElementById('train-detail-title').textContent = trainCode + ' 详细信息';
+                    renderTrainDetail(detailData.data);
+                    trainCard.style.display = 'block';
+                    stationCard.style.display = 'none';
+
+                    // 收集该车次停靠的站名
+                    const stops = detailData.data?.trainDetail?.stopTime;
+                    const stopNames = Array.isArray(stops)
+                        ? stops.map(s => s.stationName).filter(Boolean)
+                        : [];
+
+                    // 置灰：除停靠站外全部变灰（线路整体置灰，站点按停靠站保留原色）
+                    grayOutExceptStops(stopNames);
+
+                    // 拉取 RailGo 线路点并绘制行驶路径
+                    trackedFetch(`${API_BASE}/api/train_map_line?train=${trainCode}`)
+                        .then(res => res.json())
+                        .then(routeData => {
+                            if (routeData && routeData.success && routeData.data) {
+                                drawTrainRoute(trainCode, routeData.data);
+                            }
+                        })
+                        .catch(err => { if (!isAbortError(err)) console.error('拉取车次线路点失败:', err); });
+                } else {
+                    alert('查询车次详情失败');
+                }
+            });
+        }
+
         // ========== 请求管理（可取消） ==========
         let activeControllers = [];
         function trackedFetch(url, options = {}) {
@@ -914,37 +948,7 @@
                                 // 立即放弃其他车次的（预）查询，立刻跳转到车次详情
                                 stationViewAbandoned = true;
                                 cancelAllRequests();
-                                trackedFetch(`${API_BASE}/api/train_detail?train_code=${encodeURIComponent(train.train_code)}&date=${queryDate}`)
-                                    .then(res => res.json())
-                                    .then(detailData => {
-                                        if (detailData.success) {
-                                            document.getElementById('train-detail-title').textContent = train.train_code + ' 详细信息';
-                                            renderTrainDetail(detailData.data);
-                                            trainCard.style.display = 'block';
-                                            stationCard.style.display = 'none';
-
-                                            // 收集该车次停靠的站名
-                                            const stops = detailData.data?.trainDetail?.stopTime;
-                                            const stopNames = Array.isArray(stops)
-                                                ? stops.map(s => s.stationName).filter(Boolean)
-                                                : [];
-
-                                            // 置灰：除停靠站外全部变灰（线路整体置灰，站点按停靠站保留原色）
-                                            grayOutExceptStops(stopNames);
-
-                                            // 拉取 RailGo 线路点并绘制行驶路径
-                                            trackedFetch(`${API_BASE}/api/train_map_line?train=${encodeURIComponent(train.train_code)}`)
-                                                .then(res => res.json())
-                                                .then(routeData => {
-                                                    if (routeData && routeData.success && routeData.data) {
-                                                        drawTrainRoute(train.train_code, routeData.data);
-                                                    }
-                                                })
-                                                .catch(err => { if (!isAbortError(err)) console.error('拉取车次线路点失败:', err); });
-                                        } else {
-                                            alert('查询车次详情失败');
-                                        }
-                                    });
+                                renderTrainRouteAndDetail(train.train_code, queryDate);
                             });
 
                             const wrapper = tbody.closest('.station-table-wrapper');
@@ -1015,6 +1019,10 @@
                         }
                     });
                 }
+                // 如果输入的是车次号，则加入车次搜索结果
+                if (/^[GCDZTSPKLYX]\d{1,4}$/.test(keyword.toUpperCase())) {
+                    results.push({ type: 'train', properties: { train_code: keyword.toUpperCase() } });
+                }
                 searchResults.innerHTML = '';
                 if (results.length === 0) {
                     searchResults.innerHTML = '<div style="padding:12px;text-align:center;">无结果</div>';
@@ -1037,12 +1045,20 @@
                                 if (parent_line_id) line_id = parent_line_id;
                                 focusOnLine(line_id);
                             });
-                        } else {
+                        } else if (item.type === 'station') {
                             div.innerHTML = `🚉 ${item.properties.name}`;
                             div.addEventListener('click', () => {
                                 searchResults.style.display = 'none';
                                 searchInput.value = '';
                                 focusOnStation(item.properties.id);
+                            });
+                        } else if (item.type === 'train') {
+                            div.innerHTML = `🚄 ${keyword.toUpperCase()}`;
+                            div.addEventListener('click', () => {
+                                searchResults.style.display = 'none';
+                                searchInput.value = '';
+                                const queryDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+                                renderTrainRouteAndDetail(keyword.toUpperCase(), queryDate);
                             });
                         }
                         searchResults.appendChild(div);
